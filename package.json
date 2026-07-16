@@ -1,0 +1,39 @@
+{
+  "name": "agentscout",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Open-source clients for AgentScout — an agent-native, x402-paid web read/extract/crawl service. Pay per fetch in USDC; no accounts or API keys.",
+  "author": "The AgentScout Authors <contact@agentx402.ai>",
+  "homepage": "https://github.com/agentx402-ai/agentscout#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentx402-ai/agentscout.git"
+  },
+  "bugs": {
+    "url": "https://github.com/agentx402-ai/agentscout/issues"
+  },
+  "workspaces": [
+    "client",
+    "cli"
+  ],
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
+    "build": "npm --workspace client run build && npm --workspace cli run build",
+    "typecheck": "npm --workspace client run typecheck && npm --workspace cli run typecheck",
+    "pretest": "npm --workspace client run build",
+    "test": "npm --workspace client test && npm --workspace cli test",
+    "pretest:coverage": "npm --workspace client run build",
+    "test:coverage": "npm --workspace client run test:coverage && npm --workspace cli run test:coverage",
+    "lint": "biome ci .",
+    "format": "biome check --write ."
+  },
+  "overrides": {
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.1",
+    "@vitest/coverage-v8": "^4.1.9"
+  }
+}
