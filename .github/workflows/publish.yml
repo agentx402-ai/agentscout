@@ -1,0 +1,43 @@
+name: Publish to npm
+
+# Publishes client -> cli to npm on a published GitHub Release, using OIDC Trusted
+# Publishing — NO npm token. Provenance attestations are emitted automatically.
+# (@agentx402-ai/core is released separately from its own repo, agentx402-ai/core.)
+#
+# One-time setup (required before this works): configure a Trusted Publisher on EACH of
+# @agentscout/client, @agentscout/cli at npmjs.com → package → Settings → Trusted Publisher →
+# GitHub Actions → repository "agentx402-ai/agentscout", workflow "publish.yml". Bump the
+# version in every source (see RELEASING.md) before cutting the Release, or the publish
+# fails on an already-published version.
+
+on:
+  release:
+    types: [published]
+  # Manual re-run path: a release-event rerun reuses the workflow file snapshotted
+  # at the tag's commit, so a fixed workflow on main needs its own trigger.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for npm OIDC trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          # Node 24 bundles npm >= 11.5.1 (required for OIDC trusted publishing)
+          # NATIVELY. Do not reintroduce `npm install -g npm@latest`: npm
+          # overwriting itself in-place is exactly what corrupted the bundle on
+          # the first v0.2.0 publish attempt (provenance.js → missing 'sigstore').
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm --version # publish provenance path needs an intact npm bundle
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm publish -w client
+      - run: npm publish -w cli
