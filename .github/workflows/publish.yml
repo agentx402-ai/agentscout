@@ -36,6 +36,43 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: npm --version # publish provenance path needs an intact npm bundle
+      # Preflight: prove we can actually authenticate BEFORE spending a build+test on a
+      # publish that cannot succeed. Every run of this workflow to date (v0.1.0 on
+      # 2026-07-16, v0.1.1 on 2026-07-25) died at `npm publish` with a bare
+      # `E404 Not Found - PUT @agentscout%2fclient`, which reads like "package missing"
+      # but actually means "this identity may not publish here". With OIDC and no token,
+      # by far the likeliest cause is that the Trusted Publisher was never registered on
+      # npmjs.com — it is per-PACKAGE config that cannot be set from CI, so the workflow
+      # can only detect and explain it.
+      - name: Preflight — can this run publish?
+        run: |
+          set +e
+          OUT="$(npm access list packages @agentscout 2>&1)"
+          CODE=$?
+          set -e
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error title=npm publish is not authorized::Cannot authenticate to the npm registry as a publisher of @agentscout/*."
+            echo ""
+            echo "Most likely cause: the Trusted Publisher is not configured for these packages."
+            echo "This workflow publishes via OIDC with NO npm token, which requires per-package setup"
+            echo "that cannot be done from CI."
+            echo ""
+            echo "Fix, for BOTH @agentscout/client and @agentscout/cli, on npmjs.com:"
+            echo "  package -> Settings -> Trusted Publisher -> GitHub Actions"
+            echo "    repository: agentx402-ai/agentscout"
+            echo "    workflow:   publish.yml"
+            echo "    environment: release"
+            echo "Then re-run this workflow via workflow_dispatch (NOT a release re-run --"
+            echo "that replays the workflow file snapshotted at the tag)."
+            echo ""
+            echo "Alternative: add an NPM_TOKEN secret with publish rights and set it as"
+            echo "NODE_AUTH_TOKEN on the publish steps. That trades away OIDC provenance attestations."
+            echo ""
+            echo "npm said:"
+            echo "$OUT"
+            exit 1
+          fi
+          echo "npm publish authorization OK for @agentscout/*"
       - run: npm ci
       - run: npm run build
       - run: npm test
