@@ -60,8 +60,8 @@ describe("read", () => {
             usage: {
               service: "scout",
               op: "read",
-              price_usd: 0.002,
-              list_price_usd: 0.002,
+              price_usd: 0.003,
+              list_price_usd: 0.003,
               credits_charged: 0,
             },
           }),

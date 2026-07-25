@@ -41,8 +41,12 @@ const V1 = "/v1/scout";
 
 // Pinned scout base prices (USD) — used only for client-side pre-request cap math. The wire
 // price always comes from the server's 402 challenge; these are a conservative lower bound.
-// (worker: registerService("scout", { read: 2_000, … }) → read = 2000 atomic = $0.002.)
-const READ_BASE_USD = 0.002;
+// (worker: registerService("scout", { read: 3_000, … }) → read = 3000 atomic = $0.003.)
+// MUST track the worker's scout:read atomic price. This is not merely informational: it is the
+// `authorizedCeilingUsd` for a plain read, so pinning it BELOW the server's real quote makes the
+// client refuse every honest 402 with SpendCapError. Raised 0.002 → 0.003 with the worker's
+// 2026-07-25 read-price recalibration.
+const READ_BASE_USD = 0.003;
 // Pinned scout extract base price (USD) — client-side pre-request cap math only.
 // (worker: registerService("scout", { extract: 12_000, … }) → extract = 12000 atomic = $0.012.)
 const EXTRACT_BASE_USD = 0.012;
