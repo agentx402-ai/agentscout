@@ -2,7 +2,14 @@ import { AgentScoutError } from "./errors";
 import { freshNonce } from "./payment";
 import type { CrawlCompleteBody, CrawlOptions, CrawlOutcome, CrawlStatus } from "./types";
 
-const CRAWL_PAGE_USD = 0.002; // per-page price (confirm vs worker); base for the request-build cap pre-check.
+// Per-page price; base for the request-build cap pre-check AND the authorized
+// ceiling (maxPages × this + maxTollUsd). MUST track the worker's scout:crawl
+// atomic price: pinned BELOW it, the client refuses the server's honest 402 and
+// every crawl() throws SpendCapError. Raised 0.002 → 0.003 when crawl moved to the
+// same per-page price as read (so a 1-page crawl can no longer undercut a read);
+// the 20% volume discount now arrives as a credit rebate at completion instead.
+// The service repo's client-parity CI compares this against the canonical price.
+const CRAWL_PAGE_USD = 0.003;
 
 /** The subset of AgentScout internals crawl needs. Passed in by the class to avoid a circular import. */
 export interface CrawlContext {
@@ -69,7 +76,7 @@ export function makeCrawl(ctx: CrawlContext): Crawl {
       url: reqUrl,
       idempotencyKey: freshNonce(),
       label: "crawl submit failed",
-      // Authorized ceiling = pinned per-page base (max_pages × $0.002) + the max_toll_usd sent.
+      // Authorized ceiling = pinned per-page base (max_pages × $0.003) + the max_toll_usd sent.
       authorizedCeilingUsd: maxPages * CRAWL_PAGE_USD + (opts.maxTollUsd ?? 0),
       buildRequest: (headers) => ({
         method: "POST",

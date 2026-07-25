@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [0.1.2] — 2026-07-25
+
+### Fixed
+- **`crawl` now works against the current service price.** The service raised `crawl` from $0.002 to
+  $0.003 per page so a 1-page crawl can no longer undercut a `read`. `CRAWL_PAGE_USD` is the client's
+  authorized ceiling for a crawl (`maxPages × price + maxTollUsd`), so a client pinned at $0.002
+  rejects the service's honest quote and every `crawl()` throws `SpendCapError`. **Upgrade is
+  required:** 0.1.1 and earlier cannot crawl once the new price is live. `read` ($0.003) and
+  `extract` ($0.012) are unchanged.
+
+### Changed
+- A crawl budget above **$1.00** now earns a **20% volume rebate on the portion above $1.00**,
+  credited on completion — x402-funded crawls only, since a credit-funded crawl already pays the
+  20%-off rate. The rebate is marginal, so a larger budget never costs less than a smaller one.
+- Plugin skill reference requotes `scout_crawl` at ~$0.003/page and notes the rebate.
+
 ## [0.1.1] — 2026-07-25
 
 ### Fixed

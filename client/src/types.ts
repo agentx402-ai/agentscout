@@ -74,7 +74,7 @@ export interface ExtractOptions {
 }
 
 export interface CrawlOptions {
-  /** REQUIRED — price-determining (max_pages × $0.002), sent as ?max_pages=N (query-only). Integer 1..MAX_CRAWL_PAGES. */
+  /** REQUIRED — price-determining (max_pages × $0.003), sent as ?max_pages=N (query-only). Integer 1..MAX_CRAWL_PAGES. */
   maxPages: number;
   /** Wallet-mode only; query-only (?max_toll_usd=). */
   maxTollUsd?: number;

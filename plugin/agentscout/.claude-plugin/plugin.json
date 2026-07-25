@@ -1,6 +1,6 @@
 {
   "name": "agentscout",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AgentScout: x402-paid web read/extract/crawl for agents. Fetch a URL to clean markdown, extract structured JSON against a schema, or crawl a site — paid per fetch in USDC, no accounts or API keys.",
   "license": "MIT",
   "author": {

@@ -64,7 +64,7 @@ describe("crawl", () => {
         if (n === 1)
           return new Response("{}", {
             status: 402,
-            headers: { "PAYMENT-REQUIRED": challenge("6000") },
+            headers: { "PAYMENT-REQUIRED": challenge("9000") },
           });
         return new Response(
           JSON.stringify({
@@ -100,7 +100,7 @@ describe("crawl", () => {
         if (n === 1)
           return new Response("{}", {
             status: 402,
-            headers: { "PAYMENT-REQUIRED": challenge("6000") },
+            headers: { "PAYMENT-REQUIRED": challenge("9000") },
           });
         return new Response(JSON.stringify({ job_id: "job-2", status: "queued" }), { status: 202 });
       }) as unknown as typeof fetch,
@@ -192,5 +192,23 @@ describe("crawl", () => {
       client.crawl.submit("https://ex.com", { maxPages: 3, maxTollUsd: 0.01 }),
     ).rejects.toMatchObject({ code: "tolls_require_x402" });
     expect(requested).toBe(false);
+  });
+
+  it("refuses a 402 above the pinned per-page ceiling (maxPages x $0.003), no signature", async () => {
+    // Regression for the class of bug the worker-side parity CI now also guards:
+    // CRAWL_PAGE_USD must track the worker's scout:crawl price. Pinned BELOW it, this
+    // ceiling refuses the server's own honest quote and every crawl() throws.
+    // 3 pages authorizes $0.009; a $0.012 quote must be refused before signing.
+    let signed = false;
+    const fetchImpl = (async (_u: any, init?: RequestInit) => {
+      if (init && new Headers(init.headers).get("PAYMENT-SIGNATURE")) signed = true;
+      return new Response("{}", {
+        status: 402,
+        headers: { "PAYMENT-REQUIRED": challenge("12000") },
+      });
+    }) as unknown as typeof fetch;
+    const client = new AgentScout({ signer, endpoint, fetch: fetchImpl });
+    await expect(client.crawl.submit("https://ex.com", { maxPages: 3 })).rejects.toThrow();
+    expect(signed).toBe(false);
   });
 });

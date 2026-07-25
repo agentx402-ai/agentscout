@@ -20,7 +20,7 @@ import type {
   Signer,
 } from "./types";
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.2";
 
 export { generateAccountKey, isAccountKeyFormat } from "./account";
 export {
