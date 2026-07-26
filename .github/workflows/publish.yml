@@ -36,45 +36,55 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: npm --version # publish provenance path needs an intact npm bundle
-      # Preflight: prove we can actually authenticate BEFORE spending a build+test on a
-      # publish that cannot succeed. Every run of this workflow to date (v0.1.0 on
-      # 2026-07-16, v0.1.1 on 2026-07-25) died at `npm publish` with a bare
-      # `E404 Not Found - PUT @agentscout%2fclient`, which reads like "package missing"
-      # but actually means "this identity may not publish here". With OIDC and no token,
-      # by far the likeliest cause is that the Trusted Publisher was never registered on
-      # npmjs.com — it is per-PACKAGE config that cannot be set from CI, so the workflow
-      # can only detect and explain it.
-      - name: Preflight — can this run publish?
-        run: |
-          set +e
-          OUT="$(npm access list packages @agentscout 2>&1)"
-          CODE=$?
-          set -e
-          if [ "$CODE" -ne 0 ]; then
-            echo "::error title=npm publish is not authorized::Cannot authenticate to the npm registry as a publisher of @agentscout/*."
-            echo ""
-            echo "Most likely cause: the Trusted Publisher is not configured for these packages."
-            echo "This workflow publishes via OIDC with NO npm token, which requires per-package setup"
-            echo "that cannot be done from CI."
-            echo ""
-            echo "Fix, for BOTH @agentscout/client and @agentscout/cli, on npmjs.com:"
-            echo "  package -> Settings -> Trusted Publisher -> GitHub Actions"
-            echo "    repository: agentx402-ai/agentscout"
-            echo "    workflow:   publish.yml"
-            echo "    environment: release"
-            echo "Then re-run this workflow via workflow_dispatch (NOT a release re-run --"
-            echo "that replays the workflow file snapshotted at the tag)."
-            echo ""
-            echo "Alternative: add an NPM_TOKEN secret with publish rights and set it as"
-            echo "NODE_AUTH_TOKEN on the publish steps. That trades away OIDC provenance attestations."
-            echo ""
-            echo "npm said:"
-            echo "$OUT"
-            exit 1
-          fi
-          echo "npm publish authorization OK for @agentscout/*"
+      # NO PREFLIGHT AUTH CHECK — one is not possible here, and the previous attempt
+      # at one was itself the bug. It ran `npm access list packages @agentscout`, which
+      # 401s under OIDC *regardless of whether the Trusted Publisher is configured*:
+      # npm's OIDC exchange is scoped to `npm publish` / `npm stage publish` ONLY. Per
+      # npm's docs, "other npm commands like access, install, or view still require
+      # traditional authentication methods", and `npm whoami` "will not reflect OIDC
+      # authentication status since the authentication occurs only during the publish
+      # or stage operation". With no NPM_TOKEN by design, setup-node's registry-url
+      # writes an .npmrc referencing an unset NODE_AUTH_TOKEN, so any non-publish call
+      # authenticates as nobody. The gate could never go green, and it blocked a
+      # correctly-configured v0.2.0 release on 2026-07-26.
+      #
+      # There is no cheap way to test publish authorization short of publishing. So we
+      # publish, and explain clearly IF it fails (see the failure step at the end).
       - run: npm ci
       - run: npm run build
       - run: npm test
       - run: npm publish -w client
       - run: npm publish -w cli
+
+      # Runs only if a publish step above failed. Restores the diagnostic the old
+      # preflight was trying to provide, without gating on a check that cannot pass.
+      - name: Explain a publish failure
+        if: failure()
+        # Quoted heredoc ('EOF'): disables ALL shell expansion. This block is prose full
+        # of backticks and $-signs; in a plain double-quoted echo the backticks are
+        # COMMAND SUBSTITUTION — an earlier draft of this step would have literally run
+        # `npm publish` from inside the failure handler.
+        run: |
+          cat <<'EOF'
+          ::error title=npm publish failed::See the failing step above for npm's own error.
+          EOF
+          cat <<'EOF'
+
+          E404 (PUT @agentscout%2f...) or E403 from `npm publish` under OIDC almost always
+          means "this identity may not publish here", NOT "package missing". Check, for BOTH
+          @agentscout/client and @agentscout/cli on npmjs.com:
+
+            package -> Settings -> Trusted Publisher -> GitHub Actions
+              repository:  agentx402-ai/agentscout
+              workflow:    publish.yml
+              environment: release
+
+          The `environment:` must MATCH this job's `environment:` EXACTLY — including being
+          empty if the job declares none. A mismatch here fails identically to "not configured".
+
+          EEXIST / "cannot publish over previously published version" means the version was
+          already published — bump every source per RELEASING.md and re-tag.
+
+          Re-run via workflow_dispatch, NOT a release re-run: a release rerun replays the
+          workflow file snapshotted at the tag, so a fix landed on main would be ignored.
+          EOF
