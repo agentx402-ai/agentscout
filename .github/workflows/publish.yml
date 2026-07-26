@@ -34,7 +34,18 @@ jobs:
           # overwriting itself in-place is exactly what corrupted the bundle on
           # the first v0.2.0 publish attempt (provenance.js → missing 'sigstore').
           node-version: 24
-          registry-url: https://registry.npmjs.org
+          # DELIBERATELY NO registry-url. Setting it makes setup-node write an .npmrc
+          # containing `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` — and with
+          # no token set (this workflow is OIDC-only, by design) npm uses that empty
+          # placeholder credential INSTEAD of performing the OIDC exchange, authenticates
+          # as anonymous, and the registry answers a PUT from anonymous with a misleading
+          # `E404 Not Found` rather than a 403. That is the real cause of every failed run
+          # of this workflow to date — not a missing Trusted Publisher. Upstream bug:
+          # https://github.com/actions/setup-node/issues/1551
+          #
+          # Dropping it is safe here: registry.npmjs.org is npm's default, and both
+          # packages carry `publishConfig.access: public`, so scoped publishes still
+          # resolve to public without the .npmrc.
       - run: npm --version # publish provenance path needs an intact npm bundle
       # NO PREFLIGHT AUTH CHECK — one is not possible here, and the previous attempt
       # at one was itself the bug. It ran `npm access list packages @agentscout`, which
