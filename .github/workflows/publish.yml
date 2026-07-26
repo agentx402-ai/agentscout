@@ -34,18 +34,34 @@ jobs:
           # overwriting itself in-place is exactly what corrupted the bundle on
           # the first v0.2.0 publish attempt (provenance.js → missing 'sigstore').
           node-version: 24
-          # DELIBERATELY NO registry-url. Setting it makes setup-node write an .npmrc
-          # containing `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` — and with
-          # no token set (this workflow is OIDC-only, by design) npm uses that empty
-          # placeholder credential INSTEAD of performing the OIDC exchange, authenticates
-          # as anonymous, and the registry answers a PUT from anonymous with a misleading
-          # `E404 Not Found` rather than a 403. That is the real cause of every failed run
-          # of this workflow to date — not a missing Trusted Publisher. Upstream bug:
-          # https://github.com/actions/setup-node/issues/1551
+          # registry-url IS required: without it npm has no registry configured for the
+          # scoped packages and never initiates the OIDC exchange at all (it fails
+          # ENEEDAUTH instead). But setting it makes setup-node write an .npmrc line
+          #     //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+          # and with no token set — this workflow is OIDC-only by design — npm uses that
+          # empty placeholder credential INSTEAD of doing the OIDC exchange, authenticates
+          # as anonymous, and the registry answers an anonymous PUT with a misleading
+          # `E404 Not Found` rather than a 403.
           #
-          # Dropping it is safe here: registry.npmjs.org is npm's default, and both
-          # packages carry `publishConfig.access: public`, so scoped publishes still
-          # resolve to public without the .npmrc.
+          # So we need registry-url AND we need that one line gone. See the next step.
+          # Upstream bug: https://github.com/actions/setup-node/issues/1551
+          registry-url: https://registry.npmjs.org
+
+      # THE line that makes trusted publishing work. Without it every run of this
+      # workflow since v0.1.0 has failed — as E404 (reads like "package missing", is
+      # really "never authenticated"), which sent the previous fix attempt chasing a
+      # Trusted Publisher config that was correct all along.
+      #
+      # With the placeholder _authToken removed, npm finds no static credential, detects
+      # the ACTIONS_ID_TOKEN_REQUEST_* env vars that `permissions: id-token: write`
+      # provides, and performs the OIDC exchange. Provenance attestations follow
+      # automatically — no --provenance flag needed.
+      - name: Strip setup-node's placeholder _authToken so npm falls through to OIDC
+        run: |
+          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          sed -i '/_authToken/d' "$npmrc"
+          echo "npmrc after strip:"; cat "$npmrc"
+
       - run: npm --version # publish provenance path needs an intact npm bundle
       # NO PREFLIGHT AUTH CHECK — one is not possible here, and the previous attempt
       # at one was itself the bug. It ran `npm access list packages @agentscout`, which
