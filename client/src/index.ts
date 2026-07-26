@@ -314,6 +314,9 @@ export class AgentScout {
     const body: Record<string, unknown> = { url };
     if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens;
     if (opts.fresh) body.fresh = true;
+    // Forwarded as a body field like the others. Typing the option without sending it
+    // would silently no-op — the caller would ask for links and get none back.
+    if (opts.links) body.links = true;
     return this.performOp<ReadResult>({
       method: "POST",
       path,

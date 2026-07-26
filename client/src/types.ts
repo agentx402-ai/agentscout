@@ -37,12 +37,29 @@ export interface TollAccounting {
   rail: "x402";
 }
 
+/** One outbound link found on the page.
+ *
+ * Collected deterministically while parsing the HTML — never by an LLM — so an href here
+ * is one that genuinely appears on the page rather than one a model produced. Hrefs are
+ * absolute, deduplicated, restricted to http(s), and capped at 200 in document order. */
+export interface PageLink {
+  text: string;
+  href: string;
+}
+
 export type ReadResult = {
   url: string;
   markdown: string;
   title?: string;
   tokens: number;
   cache_hit: boolean;
+  /** Present only when `links: true` was requested.
+   *
+   * Also ABSENT (not empty) when the page had to be rescued by browser rendering: that
+   * path returns rendered markdown whose anchors were never parsed, so reporting the
+   * pre-render set would describe a document you did not receive. Distinguish "no links
+   * requested / not available" (undefined) from "page genuinely has none" ([]). */
+  links?: PageLink[];
 } & ({ usage: UsageBlock; toll?: undefined } | { toll: TollAccounting; usage?: undefined });
 
 /** How the extraction was produced. Present on the pay-on-success (non-toll) path.
@@ -82,6 +99,13 @@ export interface ReadOptions {
   maxTollUsd?: number;
   maxTokens?: number;
   fresh?: boolean;
+  /** Return outbound links as structured data. Off by default.
+   *
+   * Costs nothing extra — links are extracted while the HTML is already being parsed,
+   * and they are never fed to the model. `extract` never enables this: inlining URLs
+   * into an extraction prompt measured +58% input tokens on a link-heavy article, which
+   * would worsen truncation and cost accuracy. */
+  links?: boolean;
 }
 export interface ExtractOptions {
   instructions?: string;
