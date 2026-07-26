@@ -60,6 +60,17 @@ jobs:
           sed -i '/_authToken/d' "$npmrc"
           echo "npmrc after strip:"; cat "$npmrc"
 
+      # Node 24 bundles npm 11.16.0. Install the CURRENT npm into a SEPARATE prefix and
+      # put it first on PATH — never `npm install -g npm@latest`, which overwrites npm
+      # in place and is exactly what corrupted the bundle before (provenance.js →
+      # missing 'sigstore'). A separate prefix leaves the bundled npm intact.
+      - name: Use current npm (separate prefix, bundled npm untouched)
+        run: |
+          npm install -g "npm@${NPM_VERSION}" --prefix "$RUNNER_TEMP/npm-latest" >/dev/null 2>&1
+          echo "$RUNNER_TEMP/npm-latest/bin" >> "$GITHUB_PATH"
+        env:
+          NPM_VERSION: 12.0.1
+
       - run: npm --version # publish provenance path needs an intact npm bundle
       # NO PREFLIGHT AUTH CHECK — one is not possible here, and the previous attempt
       # at one was itself the bug. It ran `npm access list packages @agentscout`, which
