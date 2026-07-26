@@ -100,8 +100,18 @@ jobs:
       # verifiably present and the npmrc clean). Every known-good trusted-publishing
       # example publishes from the package directory. Order matters: client before cli,
       # since cli depends on it.
-      - run: npm publish
+      - name: Publish client (verbose — capture WHY OIDC is or is not attempted)
         working-directory: client
+        run: |
+          set +e
+          npm publish --loglevel verbose 2>&1 | tee /tmp/pub.log
+          CODE=${PIPESTATUS[0]}
+          set -e
+          echo "=================== OIDC-relevant lines ==================="
+          grep -iE "oidc|id.?token|trusted|exchange|www-authenticate|401|403|404|needauth" /tmp/pub.log || echo "(no OIDC-related output at all)"
+          echo "=================== npm debug log ========================="
+          tail -n 60 "$(ls -t /home/runner/.npm/_logs/*.log | head -1)" || true
+          exit $CODE
       - run: npm publish
         working-directory: cli
 
