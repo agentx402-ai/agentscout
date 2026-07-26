@@ -3,6 +3,11 @@
   "version": "0.2.0",
   "description": "AgentScout CLI + `agentscout mcp` MCP server.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentx402-ai/agentscout.git",
+    "directory": "cli"
+  },
   "type": "module",
   "bin": {
     "agentscout": "./dist/cli.js"

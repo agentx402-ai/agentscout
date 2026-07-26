@@ -47,42 +47,18 @@ jobs:
           # Upstream bug: https://github.com/actions/setup-node/issues/1551
           registry-url: https://registry.npmjs.org
 
-      # Auth selection. OIDC (trusted publishing) is PREFERRED and is what runs when no
-      # NPM_TOKEN secret exists — which is the default state of this repo.
-      #
-      # OIDC path: setup-node's registry-url writes
+      # setup-node's registry-url writes
       #     //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
-      # and with no token that placeholder gets used INSTEAD of the OIDC exchange, so npm
-      # authenticates as anonymous and the registry answers PUT with a misleading E404.
-      # Deleting that line is what lets npm fall through to OIDC.
+      # and with no token set — this workflow is OIDC-only by design — npm uses that empty
+      # placeholder credential INSTEAD of performing the OIDC exchange, authenticates as
+      # anonymous, and the registry answers PUT with a misleading E404. Deleting that one
+      # line is what lets npm fall through to OIDC.
       # Upstream: https://github.com/actions/setup-node/issues/1551
-      #
-      # Token path: engaged ONLY if the NPM_TOKEN secret is present. It exists because
-      # npm's OIDC exchange currently rejects this package with
-      #     POST 404 /-/npm/v1/oidc/token/exchange/package/@agentscout%2fclient
-      #     "OIDC token exchange error - package not found"
-      # despite a correct Trusted Publisher config — a known, unresolved npm bug affecting
-      # SCOPED packages (npm/cli#8678, #8730, #8976; no maintainer fix as of 2026-07-26).
-      # Provenance is NOT lost on this path: `--provenance` still attests, because
-      # `permissions: id-token: write` is granted either way.
-      #
-      # Delete the secret to return to OIDC once npm fixes the bug — no workflow edit.
-      - name: Select auth (OIDC by default; NPM_TOKEN only if the secret exists)
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Strip setup-node's placeholder _authToken so npm falls through to OIDC
         run: |
           npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-          if [ -n "$NPM_TOKEN" ]; then
-            sed -i '/_authToken/d' "$npmrc"
-            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "$npmrc"
-            echo "AUTH_MODE=token" >> "$GITHUB_ENV"
-            echo "auth: NPM_TOKEN present -> token auth (+ --provenance)"
-          else
-            sed -i '/_authToken/d' "$npmrc"
-            echo "AUTH_MODE=oidc" >> "$GITHUB_ENV"
-            echo "auth: no NPM_TOKEN -> OIDC trusted publishing"
-          fi
-          echo "npmrc (redacted):"; sed 's/_authToken=.*/_authToken=<redacted>/' "$npmrc"
+          sed -i '/_authToken/d' "$npmrc"
+          echo "npmrc after strip:"; cat "$npmrc"
 
       - run: npm --version # publish provenance path needs an intact npm bundle
       # NO PREFLIGHT AUTH CHECK — one is not possible here, and the previous attempt
@@ -112,9 +88,10 @@ jobs:
         working-directory: client
         run: |
           set +e
-          # --provenance only on the token path; OIDC attests automatically.
-          FLAGS=""; [ "$AUTH_MODE" = "token" ] && FLAGS="--provenance"
-          npm publish $FLAGS --loglevel verbose 2>&1 | tee /tmp/pub.log
+          # --provenance is passed EXPLICITLY. npm's docs say trusted publishing attests
+          # automatically, but multiple practitioner reports say the flag is still needed.
+          # It is a no-op if attestation already happens, and id-token: write is granted.
+          npm publish --provenance --loglevel verbose 2>&1 | tee /tmp/pub.log
           CODE=${PIPESTATUS[0]}
           set -e
           echo "=================== OIDC exchange result ==================="
@@ -124,9 +101,10 @@ jobs:
         working-directory: cli
         run: |
           set +e
-          # --provenance only on the token path; OIDC attests automatically.
-          FLAGS=""; [ "$AUTH_MODE" = "token" ] && FLAGS="--provenance"
-          npm publish $FLAGS --loglevel verbose 2>&1 | tee /tmp/pub-cli.log
+          # --provenance is passed EXPLICITLY. npm's docs say trusted publishing attests
+          # automatically, but multiple practitioner reports say the flag is still needed.
+          # It is a no-op if attestation already happens, and id-token: write is granted.
+          npm publish --provenance --loglevel verbose 2>&1 | tee /tmp/pub-cli.log
           CODE=${PIPESTATUS[0]}
           set -e
           grep -iE "oidc|token/exchange|needauth" /tmp/pub-cli.log || true
