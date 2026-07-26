@@ -50,8 +50,8 @@ describe("extract", () => {
             usage: {
               service: "scout",
               op: "extract",
-              price_usd: 0.012,
-              list_price_usd: 0.012,
+              price_usd: 0.02,
+              list_price_usd: 0.02,
               credits_charged: 0,
             },
           }),

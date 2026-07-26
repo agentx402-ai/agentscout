@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [0.2.0] — 2026-07-26
+
+### Changed
+- **Service prices raised on all three paid verbs.** `read` $0.003 → **$0.004**, `extract`
+  $0.012 → **$0.020**, `crawl` $0.003 → **$0.004** per page. The client pins each of these as its
+  `authorizedCeilingUsd`, so a client pinned BELOW the service's price refuses the service's own
+  honest `402` and every call throws `SpendCapError`. **Upgrade is required:** 0.1.x cannot read,
+  extract or crawl once the new prices are live.
+- Prepaid credit rates follow at the unchanged 20% discount: `read` **32 credits** ($0.0032),
+  `extract` **160 credits** ($0.0160), `crawl` **32 credits/page** ($0.0032/page).
+- `crawl` stays locked to `read`'s per-page price. This is a no-arbitrage constraint, not an
+  independent choice — any gap below `read` re-opens buying a cheap read via `crawl(max_pages=1)`.
+- Because the per-page price rose, the crawl rebate threshold is now reached at **250 pages**
+  (was 334): the rebate triggers on $1.00 billed, not on a page count.
+- Plugin skill reference requotes all three verbs.
+
+### Fixed
+- **Corrected the crawl rebate description.** 0.1.2's entry below describes the rebate as
+  *marginal* — "20% on the portion above $1.00". The shipped behavior is a **threshold** rebate:
+  a crawl that bills $1.00 or more is rebated 20% of the **whole** billed amount, which is
+  strictly more generous than what was documented. The plugin skill reference carried the same
+  error and is corrected here. Only the docs were ever wrong; no billing behavior changed.
+
 ## [0.1.2] — 2026-07-25
 
 ### Fixed

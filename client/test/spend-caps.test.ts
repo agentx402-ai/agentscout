@@ -78,7 +78,7 @@ describe("spend caps", () => {
   // --- Authorized-ceiling guard: the primary defense, active even with NO maxSpendUsd set (default). ---
 
   it("DEFAULT config (no maxSpendUsd): a 402 quoting far above the base price is REFUSED, no signature", async () => {
-    // Headline wallet-drain guard: a plain read (base $0.003) whose 402 quotes $1.00 must be refused
+    // Headline wallet-drain guard: a plain read (base $0.004) whose 402 quotes $1.00 must be refused
     // before signing, even though no explicit cap is configured.
     const { client, signed } = walletWith({}, [
       () =>
@@ -89,7 +89,7 @@ describe("spend caps", () => {
   });
 
   it("no maxSpendUsd + maxTollUsd: a 402 above base + sent max_toll_usd is REFUSED, no signature", async () => {
-    // Authorized ceiling = base $0.003 + toll $0.02 = $0.023; a $0.50 quote must be refused.
+    // Authorized ceiling = base $0.004 + toll $0.02 = $0.024; a $0.50 quote must be refused.
     const { client, signed } = walletWith({}, [
       () =>
         new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("500000") } }), // $0.50
@@ -101,11 +101,14 @@ describe("spend caps", () => {
   });
 
   it("no maxSpendUsd: an HONEST quote at exactly the base price is signed (guard does not false-reject)", async () => {
-    // 3000 atomic = $0.003 = READ_BASE_USD exactly. This must stay pinned to the REAL scout:read
+    // 4000 atomic = $0.004 = READ_BASE_USD exactly. This must stay pinned to the REAL scout:read
     // price: it is the regression that catches a client base pinned below the server's quote,
     // which would make the authorized-ceiling guard refuse every honest read.
+    // NB: this assertion is only meaningful while the literal EQUALS READ_BASE_USD. If a price
+    // change updates the constant but not this literal, the test still passes while silently
+    // testing "below base" instead of "at base" — which is exactly the hole it exists to catch.
     const { client, signed } = walletWith({}, [
-      () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("3000") } }), // $0.003 = base
+      () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("4000") } }), // $0.004 = base
       () =>
         new Response(
           JSON.stringify({ url: "u", markdown: "m", tokens: 1, cache_hit: false, usage: {} }),
@@ -118,19 +121,19 @@ describe("spend caps", () => {
   });
 
   it("maxSessionSpendUsd: first paid read resolves, second is refused at the cap BEFORE signing (one signature total)", async () => {
-    // Cap $0.005; each read is base $0.003. After the first ($0.003 spent), a second ($0.003 more)
-    // would push cumulative to $0.006 > $0.005 — refused at the session-cap check, after its probe
+    // Cap $0.005; each read is base $0.004. After the first ($0.004 spent), a second ($0.004 more)
+    // would push cumulative to $0.008 > $0.005 — refused at the session-cap check, after its probe
     // 402 but BEFORE any signature. Fetch script: probe→402, retry→200, probe→402.
     let sigCount = 0;
     let i = 0;
     const responses: Array<() => Response> = [
-      () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("3000") } }),
+      () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("4000") } }),
       () =>
         new Response(
           JSON.stringify({ url: "u", markdown: "m", tokens: 1, cache_hit: false, usage: {} }),
           { status: 200 },
         ),
-      () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("3000") } }),
+      () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("4000") } }),
     ];
     const fetchImpl = (async (_u: any, init?: RequestInit) => {
       if (init && new Headers(init.headers).get("PAYMENT-SIGNATURE")) sigCount++;

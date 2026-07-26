@@ -20,7 +20,7 @@ import type {
   Signer,
 } from "./types";
 
-export const VERSION = "0.1.2";
+export const VERSION = "0.2.0";
 
 export { generateAccountKey, isAccountKeyFormat } from "./account";
 export {
@@ -41,15 +41,20 @@ const V1 = "/v1/scout";
 
 // Pinned scout base prices (USD) — used only for client-side pre-request cap math. The wire
 // price always comes from the server's 402 challenge; these are a conservative lower bound.
-// (worker: registerService("scout", { read: 3_000, … }) → read = 3000 atomic = $0.003.)
+// (worker: registerService("scout", { read: 4_000, … }) → read = 4000 atomic = $0.004.)
 // MUST track the worker's scout:read atomic price. This is not merely informational: it is the
 // `authorizedCeilingUsd` for a plain read, so pinning it BELOW the server's real quote makes the
 // client refuse every honest 402 with SpendCapError. Raised 0.002 → 0.003 with the worker's
-// 2026-07-25 read-price recalibration.
-const READ_BASE_USD = 0.003;
+// 2026-07-25 read-price recalibration, then 0.003 → 0.004 on 2026-07-26.
+//
+// BECAUSE this is a ceiling, a price INCREASE must reach callers BEFORE the worker quotes it:
+// an un-updated client refuses the new, honest 402 as a SpendCapError. Ship the SDK first.
+const READ_BASE_USD = 0.004;
 // Pinned scout extract base price (USD) — client-side pre-request cap math only.
-// (worker: registerService("scout", { extract: 12_000, … }) → extract = 12000 atomic = $0.012.)
-const EXTRACT_BASE_USD = 0.012;
+// (worker: registerService("scout", { extract: 20_000, … }) → extract = 20000 atomic = $0.020.)
+// Raised 0.012 → 0.020 on 2026-07-26: extract is the only verb whose worst-case ladder cost can
+// approach its price, and 5:1 against read is the market's extract:scrape convention.
+const EXTRACT_BASE_USD = 0.02;
 
 // Built-in op-price ceiling (USD): when no explicit maxSpendUsd is set, a wallet-mode op refuses a
 // server-quoted 402 amount above this. Backstop against a spoofed / compromised / MITM'd challenge

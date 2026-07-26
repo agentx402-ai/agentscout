@@ -58,9 +58,9 @@ a free crawl-status check:
 | Tool | Description | Cost |
 |------|-------------|------|
 | `scout_quote` | Free toll-price probe for a URL — returns atomic-USDC prices and a `would_pay` advisory. Never signs, never spends. | **Free** |
-| `scout_read` | Fetch a URL and return clean markdown. `fresh` bypasses the ~6h read cache; `max_tokens` truncates the result. | ~$0.003 USDC + publisher toll |
-| `scout_extract` | Fetch a URL and extract structured JSON validated against a JSON Schema you pass, with optional natural-language `instructions`. | ~$0.012 USDC + publisher toll |
-| `scout_crawl` | Crawl a site up to `max_pages` (REQUIRED, price-determining) and return a results manifest with artifact links. Long crawls return a `jobId`. | ~$0.003 USDC × `max_pages` + tolls (budgets over $1 earn a 20% credit rebate on the excess) |
+| `scout_read` | Fetch a URL and return clean markdown. `fresh` bypasses the ~6h read cache; `max_tokens` truncates the result. | ~$0.004 USDC + publisher toll |
+| `scout_extract` | Fetch a URL and extract structured JSON validated against a JSON Schema you pass, with optional natural-language `instructions`. | ~$0.020 USDC + publisher toll |
+| `scout_crawl` | Crawl a site up to `max_pages` (REQUIRED, price-determining) and return a results manifest with artifact links. Long crawls return a `jobId`. | ~$0.004 USDC × `max_pages` + tolls (a crawl that bills $1.00 or more is rebated 20% of the WHOLE amount as credits, not just the part over $1) |
 | `scout_crawl_status` | Check a crawl job's status by `jobId` — returns the manifest when complete, or the in-flight status. | **Free** |
 
 > **Publisher tolls are wallet-mode only.** A page may carry a publisher **toll** on top of

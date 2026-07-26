@@ -8,8 +8,11 @@ import type { CrawlCompleteBody, CrawlOptions, CrawlOutcome, CrawlStatus } from 
 // every crawl() throws SpendCapError. Raised 0.002 → 0.003 when crawl moved to the
 // same per-page price as read (so a 1-page crawl can no longer undercut a read);
 // the 20% volume discount now arrives as a credit rebate at completion instead.
+// Raised again 0.003 → 0.004 on 2026-07-26, tracking read: this price is LOCKED to
+// read's by a no-arbitrage constraint, not chosen independently — any gap below read
+// re-opens the cheap-read-via-crawl(max_pages=1) hole.
 // The service repo's client-parity CI compares this against the canonical price.
-const CRAWL_PAGE_USD = 0.003;
+const CRAWL_PAGE_USD = 0.004;
 
 /** The subset of AgentScout internals crawl needs. Passed in by the class to avoid a circular import. */
 export interface CrawlContext {
