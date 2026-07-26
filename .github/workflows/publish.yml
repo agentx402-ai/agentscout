@@ -62,20 +62,6 @@ jobs:
           sed -i '/_authToken/d' "$npmrc"
           echo "npmrc after strip:"; cat "$npmrc"
 
-      # TEMPORARY DIAGNOSTIC. npm's OIDC detection keys off the ACTIONS_ID_TOKEN_REQUEST_*
-      # env vars that `permissions: id-token: write` is supposed to inject. If they are
-      # absent, no amount of npmrc fixing will help — the problem is permission scoping
-      # (org/repo Actions settings can withhold id-token), not npm config.
-      # Prints presence only, never the token value.
-      - name: DIAG — is the OIDC environment actually present?
-        run: |
-          echo "ACTIONS_ID_TOKEN_REQUEST_URL   set? ${ACTIONS_ID_TOKEN_REQUEST_URL:+YES}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
-          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN set? ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+YES}${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-NO}"
-          echo "npm version: $(npm --version)"
-          echo "npm config registry: $(npm config get registry)"
-          echo "--- npm config (redacted) ---"
-          npm config list 2>&1 | sed 's/_authToken=.*/_authToken=<redacted>/'
-
       - run: npm --version # publish provenance path needs an intact npm bundle
       # NO PREFLIGHT AUTH CHECK — one is not possible here, and the previous attempt
       # at one was itself the bug. It ran `npm access list packages @agentscout`, which
@@ -100,50 +86,63 @@ jobs:
       # verifiably present and the npmrc clean). Every known-good trusted-publishing
       # example publishes from the package directory. Order matters: client before cli,
       # since cli depends on it.
-      - name: Publish client (verbose — capture WHY OIDC is or is not attempted)
+      - name: Publish client (verbose — surfaces the OIDC exchange result)
         working-directory: client
         run: |
           set +e
           npm publish --loglevel verbose 2>&1 | tee /tmp/pub.log
           CODE=${PIPESTATUS[0]}
           set -e
-          echo "=================== OIDC-relevant lines ==================="
-          grep -iE "oidc|id.?token|trusted|exchange|www-authenticate|401|403|404|needauth" /tmp/pub.log || echo "(no OIDC-related output at all)"
-          echo "=================== npm debug log ========================="
-          tail -n 60 "$(ls -t /home/runner/.npm/_logs/*.log | head -1)" || true
+          echo "=================== OIDC exchange result ==================="
+          grep -iE "oidc|token/exchange|needauth" /tmp/pub.log || echo "(npm never attempted OIDC — check the npmrc strip step above)"
           exit $CODE
-      - run: npm publish
+      - name: Publish cli (verbose — same OIDC diagnostics as client)
         working-directory: cli
+        run: |
+          set +e
+          npm publish --loglevel verbose 2>&1 | tee /tmp/pub-cli.log
+          CODE=${PIPESTATUS[0]}
+          set -e
+          grep -iE "oidc|token/exchange|needauth" /tmp/pub-cli.log || true
+          exit $CODE
 
       # Runs only if a publish step above failed. Restores the diagnostic the old
       # preflight was trying to provide, without gating on a check that cannot pass.
       - name: Explain a publish failure
         if: failure()
-        # Quoted heredoc ('EOF'): disables ALL shell expansion. This block is prose full
-        # of backticks and $-signs; in a plain double-quoted echo the backticks are
-        # COMMAND SUBSTITUTION — an earlier draft of this step would have literally run
-        # `npm publish` from inside the failure handler.
+        # Quoted heredoc: disables ALL shell expansion. This is prose full of backticks
+        # and $-signs, and in a double-quoted echo backticks are COMMAND SUBSTITUTION.
         run: |
           cat <<'EOF'
-          ::error title=npm publish failed::See the failing step above for npm's own error.
+          ::error title=npm publish failed::Read the "OIDC exchange result" lines above first.
           EOF
           cat <<'EOF'
 
-          E404 (PUT @agentscout%2f...) or E403 from `npm publish` under OIDC almost always
-          means "this identity may not publish here", NOT "package missing". Check, for BOTH
-          @agentscout/client and @agentscout/cli on npmjs.com:
+          READ THE OIDC EXCHANGE LINES ABOVE — they say which half failed.
 
-            package -> Settings -> Trusted Publisher -> GitHub Actions
-              repository:  agentx402-ai/agentscout
-              workflow:    publish.yml
-              environment: release
+          1) "POST 404 .../-/npm/v1/oidc/token/exchange/package/@agentscout%2f..."
+             + "OIDC token exchange error - package not found"
+             GitHub issued the token fine; npm's REGISTRY declined it. npm has no
+             trusted-publisher configuration matching this package. Note it says
+             "package not found" even when the package exists and is published — it
+             means "no publisher config matches", not "no such package".
+             Check on npmjs.com for EACH of @agentscout/client and @agentscout/cli:
+               package -> Settings -> Trusted Publisher -> GitHub Actions
+                 repository:  agentx402-ai/agentscout
+                 workflow:    publish.yml        (filename only, not a path)
+                 environment: release            <- MUST match this job's `environment:`
+                                                    exactly, including being EMPTY if the
+                                                    job declares none
+             Config on the ORG does not substitute for per-package config.
 
-          The `environment:` must MATCH this job's `environment:` EXACTLY — including being
-          empty if the job declares none. A mismatch here fails identically to "not configured".
+          2) No OIDC lines at all, immediate ENEEDAUTH
+             npm never tried. The npmrc still has an _authToken line — check the strip
+             step. setup-node's registry-url writes a placeholder token that npm uses in
+             preference to OIDC, authenticating as anonymous.
 
-          EEXIST / "cannot publish over previously published version" means the version was
-          already published — bump every source per RELEASING.md and re-tag.
+          3) "EEXIST" / "cannot publish over previously published version"
+             Version already published. Bump every source per RELEASING.md and re-tag.
 
           Re-run via workflow_dispatch, NOT a release re-run: a release rerun replays the
-          workflow file snapshotted at the tag, so a fix landed on main would be ignored.
+          workflow file snapshotted at the tag, so a fix on main is ignored.
           EOF
