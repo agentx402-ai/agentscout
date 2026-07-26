@@ -62,6 +62,20 @@ jobs:
           sed -i '/_authToken/d' "$npmrc"
           echo "npmrc after strip:"; cat "$npmrc"
 
+      # TEMPORARY DIAGNOSTIC. npm's OIDC detection keys off the ACTIONS_ID_TOKEN_REQUEST_*
+      # env vars that `permissions: id-token: write` is supposed to inject. If they are
+      # absent, no amount of npmrc fixing will help — the problem is permission scoping
+      # (org/repo Actions settings can withhold id-token), not npm config.
+      # Prints presence only, never the token value.
+      - name: DIAG — is the OIDC environment actually present?
+        run: |
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL   set? ${ACTIONS_ID_TOKEN_REQUEST_URL:+YES}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN set? ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+YES}${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-NO}"
+          echo "npm version: $(npm --version)"
+          echo "npm config registry: $(npm config get registry)"
+          echo "--- npm config (redacted) ---"
+          npm config list 2>&1 | sed 's/_authToken=.*/_authToken=<redacted>/'
+
       - run: npm --version # publish provenance path needs an intact npm bundle
       # NO PREFLIGHT AUTH CHECK — one is not possible here, and the previous attempt
       # at one was itself the bug. It ran `npm access list packages @agentscout`, which
