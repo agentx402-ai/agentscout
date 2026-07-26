@@ -45,7 +45,22 @@ export type ReadResult = {
   cache_hit: boolean;
 } & ({ usage: UsageBlock; toll?: undefined } | { toll: TollAccounting; usage?: undefined });
 
-export type ExtractResult = { url: string; data: unknown } & (
+/** How the extraction was produced. Present on the pay-on-success (non-toll) path.
+ *
+ * `input_truncated` is the one to actually branch on: a page over the service's input
+ * cap is CUT and the ladder runs on the first ~16K tokens, so a `true` here means your
+ * JSON was derived from a PARTIAL document — you paid full price either way. Treat a
+ * truncated result as lower-confidence for anything that might appear late in the page.
+ *
+ * `winning_rung` says which model produced it: "8b" (cheapest, first attempt), "repair"
+ * (second 8B pass), "70b" (escalated), or "json" (browser-rendered structured pass). An
+ * answer from `8b` and one rescued by `70b` are not equally trustworthy. */
+export interface ExtractionMeta {
+  input_truncated: boolean;
+  winning_rung: "8b" | "repair" | "70b" | "json" | "none" | "unknown";
+}
+
+export type ExtractResult = { url: string; data: unknown; extraction?: ExtractionMeta } & (
   | { usage: UsageBlock; toll?: undefined }
   | { toll: TollAccounting; usage?: undefined }
 );
