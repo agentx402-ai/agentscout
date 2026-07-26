@@ -94,8 +94,16 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - run: npm publish -w client
-      - run: npm publish -w cli
+      # Published from INSIDE each workspace, not via `npm publish -w <name>`. The
+      # workspace flag takes a different code path in npm and the OIDC exchange was not
+      # attempted at all under it (immediate ENEEDAUTH, ~1.5s, with the OIDC env vars
+      # verifiably present and the npmrc clean). Every known-good trusted-publishing
+      # example publishes from the package directory. Order matters: client before cli,
+      # since cli depends on it.
+      - run: npm publish
+        working-directory: client
+      - run: npm publish
+        working-directory: cli
 
       # Runs only if a publish step above failed. Restores the diagnostic the old
       # preflight was trying to provide, without gating on a check that cannot pass.
