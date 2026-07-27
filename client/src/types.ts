@@ -74,7 +74,19 @@ export type ReadResult = {
  * answer from `8b` and one rescued by `70b` are not equally trustworthy. */
 export interface ExtractionMeta {
   input_truncated: boolean;
-  winning_rung: "8b" | "repair" | "70b" | "json" | "none" | "unknown";
+  /** Which ladder rung produced the answer. `chunked` means the document was too large
+   * for one pass and was read across several, then merged. */
+  winning_rung: "8b" | "repair" | "70b" | "json" | "chunked" | "none" | "unknown";
+  /** Number of passes, present only on the `chunked` path. */
+  chunks?: number;
+  /** Scalar fields where two passes disagreed and one was chosen by POSITION rather
+   * than by being more likely true.
+   *
+   * Treat a non-zero value as "part of this answer is a guess". Merging across passes
+   * also cannot compute document-global aggregates — a "total" answered by one pass is
+   * that pass's partial figure, not the whole document's — so a schema asking for
+   * totals, counts, or superlatives over a large page is the case to verify yourself. */
+  merge_conflicts?: number;
 }
 
 export type ExtractResult = { url: string; data: unknown; extraction?: ExtractionMeta } & (
