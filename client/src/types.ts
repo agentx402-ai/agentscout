@@ -89,6 +89,23 @@ export interface ExtractionMeta {
   merge_conflicts?: number;
 }
 
+/** Result of an extraction.
+ *
+ * ACCURACY GUARANTEE, and its limits. Extracted values that look like page literals —
+ * short, space-free identifiers such as tickers, codes and ids — are verified against
+ * the fetched page and DROPPED if they do not appear in it. A measured run that
+ * returned six fabricated ticker symbols returns none after this check.
+ *
+ * That check is narrow on purpose, and you should know both halves:
+ *  - It only inspects token-like strings. Prose is never checked, because a model
+ *    legitimately assembles "San Francisco, California, U.S." from scattered cells and
+ *    demanding it appear verbatim would delete correct answers.
+ *  - It only removes ARRAY ITEMS, never object fields, since removing a field would
+ *    break a `required` schema.
+ *
+ * So a schema-valid result is still a SHAPE guarantee plus a literal-token check — not
+ * a truth guarantee. Prose values, numbers and anything the model paraphrased are not
+ * verified against the source. */
 export type ExtractResult = { url: string; data: unknown; extraction?: ExtractionMeta } & (
   | { usage: UsageBlock; toll?: undefined }
   | { toll: TollAccounting; usage?: undefined }
