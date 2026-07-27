@@ -30,7 +30,7 @@
   "dependencies": {
     "@agentscout/client": "^0.3.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "viem": "^2.21.0",
+    "viem": "^2.55.10",
     "zod": "^3.25.76"
   },
   "devDependencies": {
