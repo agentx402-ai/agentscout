@@ -1,6 +1,6 @@
 {
   "name": "@agentscout/client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AgentScout SDK \u2014 x402-paid web read/extract/crawl for agents.",
   "license": "MIT",
   "repository": {

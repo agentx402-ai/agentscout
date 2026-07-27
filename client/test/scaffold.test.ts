@@ -3,6 +3,6 @@ import { VERSION } from "../src/index";
 
 describe("@agentscout/client scaffold", () => {
   it("exports a version", () => {
-    expect(VERSION).toBe("0.2.0");
+    expect(VERSION).toBe("0.3.0");
   });
 });
