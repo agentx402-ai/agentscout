@@ -122,6 +122,15 @@ export interface ReadOptions {
 export interface ExtractOptions {
   instructions?: string;
   maxTollUsd?: number;
+  /** How long to wait for an async multi-pass extraction before giving up. Default
+   * 120s.
+   *
+   * A document too large for a single pass is extracted server-side as a job, and the
+   * SDK polls it transparently. Giving up here loses patience, not the extraction:
+   * the job keeps running and its result stays readable at the status url reported on
+   * the thrown error. Polling is free — you are charged once, only if the job
+   * produces a schema-valid result. */
+  maxWaitMs?: number;
 }
 
 export interface CrawlOptions {

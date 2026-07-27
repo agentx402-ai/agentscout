@@ -65,6 +65,22 @@ const DEFAULT_MAX_OP_USD = 0.05;
 // absorbs sub-atomic float error so an exact honest quote is never falsely refused.
 const PRICE_EPS = 0.000001;
 
+/** 202 handoff shape for an extraction that needs multiple passes. */
+interface AsyncExtractJob {
+  job_id: string;
+  status: string;
+  status_url: string;
+}
+
+function isAsyncJob(v: unknown): v is AsyncExtractJob {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as AsyncExtractJob).job_id === "string" &&
+    typeof (v as AsyncExtractJob).status_url === "string"
+  );
+}
+
 export class AgentScout {
   readonly endpoint: string;
   readonly network: string;
@@ -351,7 +367,15 @@ export class AgentScout {
         headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify(body),
       }),
-      parseSuccess: async (res) => JSON.parse(await res.text()) as ExtractResult,
+      parseSuccess: async (res) => {
+        const parsed = JSON.parse(await res.text()) as ExtractResult | AsyncExtractJob;
+        // A document too large for one pass comes back as 202 {job_id, status_url}
+        // instead of a result. Poll it transparently so callers see ONE api: the
+        // async hop is a server-side implementation detail, not something every
+        // caller should have to hand-roll.
+        if (isAsyncJob(parsed)) return this.awaitExtractJob(parsed, opts);
+        return parsed;
+      },
     });
   }
 
@@ -361,5 +385,55 @@ export class AgentScout {
     const res = await this.fetchWithRetry(reqUrl, () => ({ method: "GET" }));
     if (!res.ok) throw await this.asError(res, "quote failed");
     return JSON.parse(await res.text()) as QuoteResult;
+  }
+
+  /**
+   * Wait for an async extraction job and return its result.
+   *
+   * Polling is FREE — the status route reads orchestration state, and a client that
+   * polls a slow job must never pay per poll. Payment already happened (or did not):
+   * the server settles only when a schema-valid result exists, so a completed job is
+   * one the caller was charged for and a failed job is one they were not.
+   *
+   * Backs off rather than hammering, and gives up at a bound instead of hanging —
+   * the job keeps running server-side and its result stays readable at status_url,
+   * so a timeout here loses patience, not the extraction.
+   */
+  private async awaitExtractJob(
+    job: AsyncExtractJob,
+    opts: ExtractOptions,
+  ): Promise<ExtractResult> {
+    const deadline = Date.now() + (opts.maxWaitMs ?? 120_000);
+    let delay = 1_000;
+    for (;;) {
+      if (Date.now() >= deadline) {
+        throw new AgentScoutError(
+          `extraction job ${job.job_id} did not finish within maxWaitMs; it may still complete server-side — poll ${job.status_url}`,
+          "extract_job_timeout",
+          0,
+        );
+      }
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 1.5, 5_000);
+
+      const res = await (this.fetchImpl ?? fetch)(job.status_url, { method: "GET" });
+      if (!res.ok) continue; // transient; the deadline bounds this
+      const body = (await res.json()) as {
+        status: string;
+        data?: unknown;
+        extraction?: unknown;
+        error?: { code: string; hint: string };
+      };
+      if (body.status === "complete") {
+        return { url: job.job_id, data: body.data, extraction: body.extraction } as ExtractResult;
+      }
+      if (body.status === "failed") {
+        throw new AgentScoutError(
+          body.error?.hint ?? "extraction job failed; nothing was charged",
+          body.error?.code ?? "extract_failed",
+          0,
+        );
+      }
+    }
   }
 }
