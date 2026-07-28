@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [0.3.1] - 2026-07-29
+
+### Changed
+
+- Dependency floors raised to match what installs already resolve: `viem` `^2.55.10`
+  (Dependabot) and `@agentx402-ai/core` `^0.1.1` (metadata-only core release: corrected
+  npm repository link). No runtime behavior change in this package.
+
 ## [0.2.0] — 2026-07-26
 
 ### Changed
