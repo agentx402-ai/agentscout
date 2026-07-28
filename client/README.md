@@ -71,6 +71,24 @@ caller cannot front a real-USDC toll, so setting one in account-key mode fails f
   site (`maxPages` is required and price-determining). Also `crawl.submit`, `crawl.status(jobId)`,
   `crawl.artifact(jobId, key)`, and `crawl.wait(jobId)` for resuming a long job.
 
+### Writing extraction schemas
+
+The model reads your field `description`s, and for a value whose common name differs from what
+the page literally writes, the description decides which one you get: describing the **fact**
+invites the model's world knowledge, while describing the **page's text** pins the extraction to
+the document. Measured example — a page that writes "RTX 4000 series" where the marketing name
+is "RTX 40 Series" (temperature 0, n=20 per phrasing):
+
+| description | result |
+|---|---|
+| `"The Nvidia GeForce RTX series number …"` | `40` (the model's prior) 19/20 |
+| same, plus `"…using the exact figure as printed on the page"` | still `40` 19/20 |
+| `"The number the page itself writes in the name of the Nvidia RTX series …"` | `4000` 16/20 |
+
+Bolting "exactly as printed" onto a fact-shaped description does not help; **phrase the whole
+description as a question about the page's text**. This matters most for integer-typed fields —
+a plausible wrong number is schema-valid, so the description is your main lever.
+
 ### Money-safety
 
 - **The SDK signs the challenge's exact quoted amount** — never a self-computed sum — pinning the
