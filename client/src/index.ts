@@ -12,12 +12,15 @@ import {
 } from "./payment";
 import type {
   AgentScoutOptions,
+  ExtractionMeta,
   ExtractOptions,
   ExtractResult,
   QuoteResult,
   ReadOptions,
   ReadResult,
   Signer,
+  TollAccounting,
+  UsageBlock,
 } from "./types";
 
 export const VERSION = "0.3.1";
@@ -81,6 +84,21 @@ function isAsyncJob(v: unknown): v is AsyncExtractJob {
   );
 }
 
+/**
+ * Fail closed on a malformed money bound. A spend cap or toll budget that is not a finite,
+ * non-negative number is REJECTED here — never stored and silently ignored. Money-safety
+ * invariant 1: a malformed cap fails closed, never "unlimited". The dangerous value is a
+ * non-finite one — `usd > NaN` is always false, so an unchecked NaN would void every downstream
+ * price guard. Mirrors the CLI's config.ts numOrThrow at the SDK boundary (a direct SDK consumer,
+ * or the unvalidated config.json path, can hand the constructor any value).
+ */
+function assertFiniteUsd(value: unknown, label: string): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new AgentScoutError(`${label} must be a non-negative finite number`, "invalid_config", 0);
+  }
+}
+
 export class AgentScout {
   readonly endpoint: string;
   readonly network: string;
@@ -101,6 +119,11 @@ export class AgentScout {
     this.network = (opts as { network?: string }).network ?? DEFAULT_NETWORK;
     this.maxSpendUsd = (opts as { maxSpendUsd?: number }).maxSpendUsd;
     this.maxSessionSpendUsd = (opts as { maxSessionSpendUsd?: number }).maxSessionSpendUsd;
+    // Fail closed on a malformed cap: a non-finite/negative value must throw at construction,
+    // never be stored (a NaN cap makes every `usd > cap` check false → unlimited spend, and also
+    // silently disables the DEFAULT_MAX_OP_USD backstop, which only runs when maxSpendUsd is unset).
+    assertFiniteUsd(this.maxSpendUsd, "maxSpendUsd");
+    assertFiniteUsd(this.maxSessionSpendUsd, "maxSessionSpendUsd");
     this.maxRetries = Math.max(0, Math.floor((opts as { retries?: number }).retries ?? 2));
     this.timeoutMs = (opts as { timeoutMs?: number }).timeoutMs;
     this.fetchImpl = (opts as { fetch?: typeof fetch }).fetch;
@@ -218,6 +241,10 @@ export class AgentScout {
    * known (pinnedBaseUsd), also pre-check base+toll against the spend caps.
    */
   protected assertTollBudget(maxTollUsd: number | undefined, pinnedBaseUsd: number): void {
+    // Fail closed on a malformed toll BEFORE the early-return: a non-finite/negative value must
+    // throw, not slip through to become a NaN authorizedCeilingUsd that voids the wallet-drain
+    // guard downstream (`usd > NaN` is always false, so the client would sign any quoted amount).
+    assertFiniteUsd(maxTollUsd, "maxTollUsd");
     if (maxTollUsd === undefined || maxTollUsd <= 0) return;
     if (this.accountKey) {
       throw new AgentScoutError(
@@ -281,6 +308,15 @@ export class AgentScout {
       //     authorized (pinned base price + the max_toll_usd actually sent). Holds even in the
       //     default no-maxSpendUsd config, so a lying/spoofed/MITM'd server cannot inflate the amount.
       if (spec.authorizedCeilingUsd !== undefined) {
+        // Defense in depth at the signing choke point: a non-finite ceiling (a NaN that somehow
+        // reached here) is a HARD refusal, not a vacuous `usd > NaN` that always passes. Inputs are
+        // validated upstream (assertFiniteUsd), so this only fires on a bug — but this is the last
+        // gate before a signature, so it refuses rather than trusts.
+        if (!Number.isFinite(spec.authorizedCeilingUsd)) {
+          throw new SpendCapError(
+            `authorized ceiling $${spec.authorizedCeilingUsd} is not a finite amount; refusing to sign`,
+          );
+        }
         if (usd > spec.authorizedCeilingUsd + PRICE_EPS) {
           throw new SpendCapError(
             `server quoted $${usd} but the client only authorized $${spec.authorizedCeilingUsd} ` +
@@ -373,7 +409,7 @@ export class AgentScout {
         // instead of a result. Poll it transparently so callers see ONE api: the
         // async hop is a server-side implementation detail, not something every
         // caller should have to hand-roll.
-        if (isAsyncJob(parsed)) return this.awaitExtractJob(parsed, opts);
+        if (isAsyncJob(parsed)) return this.awaitExtractJob(parsed, opts, url);
         return parsed;
       },
     });
@@ -402,30 +438,52 @@ export class AgentScout {
   private async awaitExtractJob(
     job: AsyncExtractJob,
     opts: ExtractOptions,
+    url: string,
   ): Promise<ExtractResult> {
     const deadline = Date.now() + (opts.maxWaitMs ?? 120_000);
     let delay = 1_000;
     for (;;) {
-      if (Date.now() >= deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
         throw new AgentScoutError(
           `extraction job ${job.job_id} did not finish within maxWaitMs; it may still complete server-side — poll ${job.status_url}`,
           "extract_job_timeout",
           0,
         );
       }
-      await new Promise((r) => setTimeout(r, delay));
+      // Never oversleep past the deadline.
+      await new Promise((r) => setTimeout(r, Math.min(delay, remaining)));
       delay = Math.min(delay * 1.5, 5_000);
 
-      const res = await (this.fetchImpl ?? fetch)(job.status_url, { method: "GET" });
+      // Bound each poll by the remaining budget so a hung request can't outlive maxWaitMs, and
+      // treat a thrown fetch (network error / per-poll timeout) as transient — the deadline check
+      // at the top of the loop ends it — rather than rejecting extract() with a raw TypeError.
+      let res: Response;
+      try {
+        res = await (this.fetchImpl ?? fetch)(job.status_url, {
+          method: "GET",
+          signal: AbortSignal.timeout(Math.max(0, deadline - Date.now())),
+        });
+      } catch {
+        continue;
+      }
       if (!res.ok) continue; // transient; the deadline bounds this
       const body = (await res.json()) as {
         status: string;
         data?: unknown;
-        extraction?: unknown;
+        extraction?: ExtractionMeta;
+        usage?: UsageBlock;
+        toll?: TollAccounting;
         error?: { code: string; hint: string };
       };
       if (body.status === "complete") {
-        return { url: job.job_id, data: body.data, extraction: body.extraction } as ExtractResult;
+        // The result's url is the page that was extracted (the caller's `url`), NOT the job id.
+        // Carry whatever accounting the server settled; the async status route may report only the
+        // result (payment settles server-side), so the accounting block can legitimately be absent.
+        const base = { url, data: body.data, extraction: body.extraction };
+        if (body.toll) return { ...base, toll: body.toll };
+        if (body.usage) return { ...base, usage: body.usage };
+        return base;
       }
       if (body.status === "failed") {
         throw new AgentScoutError(

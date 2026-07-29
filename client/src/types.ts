@@ -109,6 +109,10 @@ export interface ExtractionMeta {
 export type ExtractResult = { url: string; data: unknown; extraction?: ExtractionMeta } & (
   | { usage: UsageBlock; toll?: undefined }
   | { toll: TollAccounting; usage?: undefined }
+  // Async multi-pass completions may carry NO accounting block: payment settles server-side and the
+  // status route can report only the result. Accounting is present on the single-pass (sync) path
+  // and optional on the polled async path — narrow on `"usage" in result` / `"toll" in result`.
+  | { usage?: undefined; toll?: undefined }
 );
 
 /** All four branches are HTTP 200. Prices are ATOMIC USDC integers (6 decimals), NOT USD. */
@@ -151,7 +155,7 @@ export interface ExtractOptions {
 }
 
 export interface CrawlOptions {
-  /** REQUIRED — price-determining (max_pages × $0.003), sent as ?max_pages=N (query-only). Integer 1..MAX_CRAWL_PAGES. */
+  /** REQUIRED — price-determining (max_pages × $0.004), sent as ?max_pages=N (query-only). Integer 1..MAX_CRAWL_PAGES. */
   maxPages: number;
   /** Wallet-mode only; query-only (?max_toll_usd=). */
   maxTollUsd?: number;

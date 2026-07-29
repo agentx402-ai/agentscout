@@ -79,7 +79,7 @@ export function makeCrawl(ctx: CrawlContext): Crawl {
       url: reqUrl,
       idempotencyKey: freshNonce(),
       label: "crawl submit failed",
-      // Authorized ceiling = pinned per-page base (max_pages × $0.003) + the max_toll_usd sent.
+      // Authorized ceiling = pinned per-page base (max_pages × $0.004) + the max_toll_usd sent.
       authorizedCeilingUsd: maxPages * CRAWL_PAGE_USD + (opts.maxTollUsd ?? 0),
       buildRequest: (headers) => ({
         method: "POST",
