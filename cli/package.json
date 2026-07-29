@@ -1,6 +1,6 @@
 {
   "name": "@agentscout/cli",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "AgentScout CLI + `agentscout mcp` MCP server.",
   "license": "MIT",
   "repository": {
@@ -28,7 +28,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@agentscout/client": "^0.3.1",
+    "@agentscout/client": "^0.4.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "viem": "^2.55.10",
     "zod": "^3.25.76"

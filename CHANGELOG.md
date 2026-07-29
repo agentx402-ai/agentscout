@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-07-29
+
+### Added
+
+- New `ScoutErrorCode` members surfaced from the `@agentx402-ai/core` 0.2.0 payment/transport
+  guards: `network_error`, `aborted`, `unpinned_network`, `unsupported_network`, `network_mismatch`,
+  `asset_mismatch`, `domain_mismatch`, `invalid_challenge`, `invalid_amount`. A client that pins its
+  network and signs an honest challenge never sees these — they identify a spoofed/mismatched
+  challenge or a transport failure.
+
+### Changed
+
+- Dependency floor `@agentx402-ai/core` raised to `^0.2.0`: safe-by-default money path (the
+  network + canonical-asset pin is now required before an EIP-3009 authorization is signed), a
+  typed challenge taxonomy, and abort-aware retry. AgentScout's own API is unchanged apart from the
+  added error codes above.
+
+### Fixed
+
+- **Spend caps and tolls fail closed on a malformed value.** A non-finite `maxSpendUsd`,
+  `maxSessionSpendUsd`, or `maxTollUsd` (e.g. `NaN` from a bad parse, or a non-numeric value in
+  `config.json`) used to silently disable the cap — the exact "malformed cap becomes unlimited"
+  hole the caps exist to prevent. Such a value now throws `invalid_config` at construction or before
+  the request, and never signs.
+- **Async extraction** now returns the fetched page URL (was the job id) and carries the usage/toll
+  accounting through; the transparent poll loop is bounded by `maxWaitMs` and no longer rejects
+  `extract()` with a raw `TypeError` on a transient network error.
+
 ## [0.3.1] - 2026-07-29
 
 ### Changed
