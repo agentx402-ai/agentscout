@@ -41,7 +41,11 @@ function completeBody(job_id: string, pages_ok: number, pages_failed = 0) {
     pages_ok,
     pages_failed,
     pages: [],
-    budget: { max_pages: 3, billable_pages: pages_ok, unused_pages: 3 - pages_ok },
+    budget: {
+      max_pages: 3,
+      billable_pages: pages_ok,
+      unused_pages: 3 - pages_ok,
+    },
     tolls_paid_atomic: 0,
     unused_toll_atomic: 0,
     tolls: [],
@@ -79,7 +83,9 @@ describe("crawl", () => {
         );
       }) as unknown as typeof fetch,
     });
-    const { jobId } = await client.crawl.submit("https://ex.com", { maxPages: 3 });
+    const { jobId } = await client.crawl.submit("https://ex.com", {
+      maxPages: 3,
+    });
     expect(jobId).toBe("job-1");
     expect(urls.every((u) => u.includes("max_pages=3"))).toBe(true);
   });
@@ -123,7 +129,10 @@ describe("crawl", () => {
           status: 200,
         })) as unknown as typeof fetch,
     });
-    const outcome = await client.crawl.wait("job-3", { timeoutMs: 100, pollIntervalMs: 10 });
+    const outcome = await client.crawl.wait("job-3", {
+      timeoutMs: 100,
+      pollIntervalMs: 10,
+    });
     expect(outcome.status).toBe("complete");
     if (outcome.status === "complete") {
       expect(outcome.pages_ok).toBe(0);
@@ -144,6 +153,60 @@ describe("crawl", () => {
     await expect(
       client.crawl.wait("job-4", { timeoutMs: 100, pollIntervalMs: 10 }),
     ).rejects.toMatchObject({ code: "crawl_errored" });
+  });
+
+  it("wait throws on a dead-lettered (failed) status, and surfaces the refund", async () => {
+    const client = new AgentScout({
+      signer,
+      endpoint,
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({
+            job_id: "job-5",
+            status: "failed",
+            code: "job_dropped",
+            hint: "the crawl could not be started; the full budget was returned as credits",
+            refunded_credits: 200,
+            failed_at: 1753000000000,
+          }),
+          { status: 200 },
+        )) as unknown as typeof fetch,
+    });
+    await expect(
+      client.crawl.wait("job-5", { timeoutMs: 100, pollIntervalMs: 10 }),
+    ).rejects.toMatchObject({
+      code: "job_dropped",
+      hint: "the crawl could not be started; the full budget was returned as credits",
+      message: expect.stringContaining("200"), // the refunded amount, not just the hint
+    });
+  });
+
+  it("status() returns a failed body with code/hint/refunded_credits/failed_at typed, no cast", async () => {
+    const client = new AgentScout({
+      signer,
+      endpoint,
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({
+            job_id: "job-6",
+            status: "failed",
+            code: "job_dropped",
+            hint: "the crawl could not be started; the full budget was returned as credits",
+            refunded_credits: 60,
+            failed_at: 1753000000000,
+          }),
+          { status: 200 },
+        )) as unknown as typeof fetch,
+    });
+    const s = await client.crawl.status("job-6");
+    expect(s.status).toBe("failed");
+    // `refunded_credits` exists on the `failed` arm only — narrowing on it (rather than on
+    // `status`, which the loose fallback's `status: string` structurally overlaps) is what
+    // gives typed, cast-free access to code/hint/failed_at below.
+    if (!("refunded_credits" in s)) throw new Error("expected the failed arm");
+    expect(s.code).toBe("job_dropped");
+    expect(s.refunded_credits).toBe(60);
+    expect(s.failed_at).toBe(1753000000000);
   });
 
   it("status maps an unknown job (404) to not_found", async () => {

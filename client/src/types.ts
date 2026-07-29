@@ -203,4 +203,16 @@ export type CrawlOutcome =
 
 export type CrawlStatus =
   | ({ status: "complete" } & CrawlCompleteBody)
+  // Dead-lettered before the crawl could start (queue delivery exhausted) — terminal, and the
+  // full budget is already refunded as credits. `status === "failed"` alone won't narrow TS to
+  // just this arm (the loose fallback below is `status: string`, which structurally overlaps
+  // any literal); narrow on a field unique to this arm instead, e.g. `"refunded_credits" in s`.
+  | {
+      job_id: string;
+      status: "failed";
+      code: string;
+      hint: string;
+      refunded_credits: number;
+      failed_at: number;
+    }
   | { job_id: string; status: string; error?: string };

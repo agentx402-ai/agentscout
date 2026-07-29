@@ -123,6 +123,22 @@ export function makeCrawl(ctx: CrawlContext): Crawl {
         const err = (s as { error?: string }).error ?? "crawl errored";
         throw new AgentScoutError(`crawl ${jobId} errored: ${err}`, "crawl_errored", 0, err);
       }
+      if ("status" in s && s.status === "failed") {
+        // Dead-lettered before the crawl could start — terminal; the full budget is already
+        // refunded as credits, so surface the amount, not just the hint.
+        const body = s as {
+          code?: string;
+          hint?: string;
+          refunded_credits?: number;
+        };
+        const hint = body.hint ?? "the crawl could not be started";
+        throw new AgentScoutError(
+          `crawl ${jobId} failed: ${hint} (refunded_credits: ${body.refunded_credits ?? 0})`,
+          body.code ?? "job_dropped",
+          0,
+          hint,
+        );
+      }
       if (Date.now() + pollIntervalMs >= deadline) {
         return { status: "pending", jobId }; // resumable handle — crawl still running server-side
       }

@@ -60,6 +60,10 @@ export type ScoutErrorCode =
   | "invalid_challenge"
   | "invalid_amount"
   | "crawl_errored"
+  // crawl dead-lettered before it could start (queue delivery exhausted) — terminal, distinct
+  // from crawl_errored (which means the crawl ran and blew up). The worker's own status-poll
+  // `code`, forwarded verbatim; refunded_credits/hint on the body cover the refund.
+  | "job_dropped"
   | "invalid_config";
 
 /**
