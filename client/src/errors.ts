@@ -45,9 +45,20 @@ export type ScoutErrorCode =
   | "upstream_unavailable"
   // generic fallback in scoutErrorFromResponse when the response body carries no `code`
   | "request_failed"
-  // client-side, pre-request/pre-sign:
+  // transport, from the core fetch/retry layer:
+  | "network_error"
+  | "aborted"
+  // client-side, pre-request/pre-sign — the core x402/EIP-712 payment guards throw these BEFORE
+  // any signature, so a spoofed / mismatched / hostile challenge is rejected, never signed:
   | "payto_mismatch"
   | "spend_cap_exceeded"
+  | "unpinned_network"
+  | "unsupported_network"
+  | "network_mismatch"
+  | "asset_mismatch"
+  | "domain_mismatch"
+  | "invalid_challenge"
+  | "invalid_amount"
   | "crawl_errored"
   | "invalid_config";
 
