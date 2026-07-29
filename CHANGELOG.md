@@ -10,6 +10,27 @@ All notable changes to this project are documented here. Format: [Keep a Changel
   (Dependabot) and `@agentx402-ai/core` `^0.1.1` (metadata-only core release: corrected
   npm repository link). No runtime behavior change in this package.
 
+## [0.3.0] — 2026-07-27
+
+### Added
+
+- **Transparent async extraction.** A document too large for a single pass is extracted server-side
+  as a job; the SDK now polls it to completion so `await extract(...)` returns the result directly —
+  the async hop is invisible to callers. Polling is free and bounded by `maxWaitMs` (default 120s);
+  on timeout the error carries the still-running job's status URL.
+- **`read({ links })`.** Opt-in structured outbound links (`PageLink[]`) parsed from the page —
+  absolute, deduplicated, `http(s)`-only, capped at 200 in document order. Off by default and costs
+  nothing extra (links are collected while the HTML is already parsed, never sent to the model).
+- **Extraction metadata** on `ExtractResult.extraction`: `input_truncated`, `winning_rung`
+  (`8b` / `repair` / `70b` / `json` / `chunked`), plus `chunks` / `merge_conflicts` on the chunked
+  path — so callers can judge how an answer was produced.
+
+### Changed
+
+- Documented the source-verification guarantee on `ExtractResult`: token-like array items are
+  checked against the fetched page and dropped if absent (a shape + literal-token check, not a
+  truth guarantee for prose or numbers).
+
 ## [0.2.0] — 2026-07-26
 
 ### Changed

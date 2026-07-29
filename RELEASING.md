@@ -22,14 +22,13 @@ diverge. The sixth (marketplace) pin lives in another repo and is synced automat
 
 ## Publish order (required)
 
-Each higher package depends on a lower one at `^0.x`, so publish bottom-up:
-
-1. `npm publish -w client` — `@agentscout/client` (depends on the already-published `@agentx402-ai/core`)
-2. `npm publish -w cli` — `@agentscout/cli` (depends on `@agentscout/client`)
-
-Do NOT publish a higher package before the one it depends on, or `npm install` will
-`E404` for consumers until the dependency lands. If you also changed `@agentx402-ai/core`,
-release it first from its own repo and bump the `^` range in `client`/`cli`.
+Each higher package depends on a lower one at `^0.x`, so they publish bottom-up — **client, then
+cli**. This order is enforced by `publish.yml` (OIDC trusted publishing): cutting the GitHub Release
+runs the workflow, which publishes `@agentscout/client` before `@agentscout/cli`. Do NOT run
+`npm publish` from a laptop — it bypasses provenance and, once the workflow has already published,
+fails `EEXIST`. (Publishing a higher package before the one it depends on would `E404` for
+consumers until the dependency lands; the enforced order prevents that.) If you also changed
+`@agentx402-ai/core`, release it first from its own repo and bump the `^` range in `client`/`cli`.
 
 ## Steps
 
@@ -38,7 +37,8 @@ release it first from its own repo and bump the `^` range in `client`/`cli`.
 2. Update `CHANGELOG.md` — add a dated `## [<version>]` section for the release.
 3. `npm ci && npm run lint && npm run build && npm test` — all green.
 4. `npm pack --dry-run --workspaces` — confirm each tarball's contents.
-5. Publish in the order above.
+5. Publishing is automated — do NOT run `npm publish` by hand. Cutting the Release (next step)
+   runs `publish.yml`, which publishes client then cli via OIDC in the enforced order above.
 6. Cut the GitHub Release: `gh release create v<version> --generate-notes`. This tags AND
    publishes a Release — a plain `git push --tags` will NOT fire the publish or the marketplace
    auto-sync. Publishing the Release runs `publish.yml` (OIDC trusted publishing, client then cli).
