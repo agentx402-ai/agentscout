@@ -36,9 +36,15 @@ export type ScoutErrorCode =
   | "schema_too_large"
   | "thin_content"
   | "extraction_failed"
+  // async extract job: the failure code (server-supplied or the SDK default) and the
+  // client-side poll timeout
+  | "extract_failed"
+  | "extract_job_timeout"
   | "rate_limited"
   | "internal_error"
   | "upstream_unavailable"
+  // generic fallback in scoutErrorFromResponse when the response body carries no `code`
+  | "request_failed"
   // client-side, pre-request/pre-sign:
   | "payto_mismatch"
   | "spend_cap_exceeded"
