@@ -35,4 +35,12 @@ describe("resolveConfig precedence + fail-closed", () => {
       /AGENTSCOUT_MAX_SPEND_USD/,
     );
   });
+  it("fails closed on a malformed cap from the config FILE too, not just env", () => {
+    // Regression: file.maxSpendUsd used to flow through unvalidated (a bare JSON.parse cast), so a
+    // typo'd config.json cap ("$0.05", "0,05", …) silently disabled the guard. It must fail closed
+    // the same as the env path.
+    expect(() => resolveConfig({}, {}, () => ({ maxSpendUsd: "$0.05" }) as never)).toThrow(
+      /maxSpendUsd/,
+    );
+  });
 });

@@ -30,13 +30,16 @@ function envStr(v: string | undefined): string | undefined {
 }
 
 /**
- * Parse a non-negative numeric env var. Unset/empty -> undefined (no cap — the documented
- * default). A set-but-malformed or negative value THROWS (fail closed): a typo'd spend/toll cap
- * must not silently become "unlimited" on real funds.
+ * Parse a non-negative numeric config value — an env-var string OR a config.json field. Unset,
+ * empty, or null -> undefined (no cap — the documented default). A set-but-malformed or negative
+ * value THROWS (fail closed): a typo'd spend/toll cap must not silently become "unlimited" on real
+ * funds. Accepts `unknown` so a config.json value (JSON.parse can make it any type) is validated
+ * the same as an env string, not trusted as a number.
  */
-function numOrThrow(v: string | undefined, name: string): number | undefined {
-  if (envStr(v) === undefined) return undefined;
-  const n = Number(v);
+function numOrThrow(v: unknown, name: string): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === "string" && v.trim() === "") return undefined;
+  const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n) || n < 0) {
     throw new Error(`${name} must be a non-negative number (got ${JSON.stringify(v)})`);
   }
@@ -73,7 +76,7 @@ export function resolveConfig(
     maxSpendUsd:
       f.maxSpendUsd ??
       numOrThrow(env.AGENTSCOUT_MAX_SPEND_USD, "AGENTSCOUT_MAX_SPEND_USD") ??
-      file.maxSpendUsd,
+      numOrThrow(file.maxSpendUsd, "maxSpendUsd (config.json)"),
     maxSessionSpendUsd: numOrThrow(
       env.AGENTSCOUT_MAX_SESSION_SPEND_USD,
       "AGENTSCOUT_MAX_SESSION_SPEND_USD",
