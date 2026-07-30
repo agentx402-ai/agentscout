@@ -85,6 +85,11 @@ export type ScoutErrorCode =
   // 401 from the ledger, forwarded by /extract's fund-gate: a forged or
   // unprovisioned account key resolves to no account.
   | "account_not_found"
+  // 401 on /extract or /read when auth was rejected after the request was already
+  // in flight — a replayed EIP-712 nonce on either route, or an unprovisioned bearer
+  // account on /read. Deliberately generic: several distinct auth failures collapse
+  // onto one HTTP status at that point, so the worker cannot say which.
+  | "auth_required"
   | "invalid_config";
 
 /**
