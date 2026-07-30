@@ -27,26 +27,40 @@ function challenge(amount: string): string {
   );
 }
 
+// Spy on the signer so a test can assert a signature was never PRODUCED — not merely never SENT.
+// `signed` (a sent PAYMENT-SIGNATURE header) stays false even if code signed and then failed to
+// send, so it can't catch a sign-before-check reorder; `produced` counts the actual EIP-712
+// signing. The positive tests assert produced()===1 to prove the spy really observes signing.
 function walletWith(opts: Record<string, unknown>, responses: Array<() => Response>) {
   let i = 0,
-    signed = false;
+    signed = false,
+    produced = 0;
+  const spy = {
+    ...signer,
+    signTypedData: ((typedData: Parameters<typeof signer.signTypedData>[0]) => {
+      produced++;
+      return signer.signTypedData(typedData);
+    }) as typeof signer.signTypedData,
+  } as typeof signer;
   const fetchImpl = (async (_u: any, init?: RequestInit) => {
     if (init && new Headers(init.headers).get("PAYMENT-SIGNATURE")) signed = true;
     return responses[Math.min(i++, responses.length - 1)]();
   }) as unknown as typeof fetch;
   return {
-    client: new AgentScout({ signer, endpoint, fetch: fetchImpl, ...opts }),
+    client: new AgentScout({ signer: spy, endpoint, fetch: fetchImpl, ...opts }),
     signed: () => signed,
+    produced: () => produced,
   };
 }
 
 describe("spend caps", () => {
   it("pre-sign: a challenge over maxSpendUsd throws SpendCapError, NO signature produced", async () => {
-    const { client, signed } = walletWith({ maxSpendUsd: 0.001 }, [
+    const { client, signed, produced } = walletWith({ maxSpendUsd: 0.001 }, [
       () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("2000") } }), // $0.002 > $0.001
     ]);
     await expect(client.read("https://ex.com")).rejects.toBeInstanceOf(SpendCapError);
     expect(signed()).toBe(false);
+    expect(produced()).toBe(0); // no signature was ever produced, not merely unsent
   });
 
   it("request-build: maxTollUsd that breaches maxSpendUsd throws BEFORE any request", async () => {
@@ -80,17 +94,18 @@ describe("spend caps", () => {
   it("DEFAULT config (no maxSpendUsd): a 402 quoting far above the base price is REFUSED, no signature", async () => {
     // Headline wallet-drain guard: a plain read (base $0.004) whose 402 quotes $1.00 must be refused
     // before signing, even though no explicit cap is configured.
-    const { client, signed } = walletWith({}, [
+    const { client, signed, produced } = walletWith({}, [
       () =>
         new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("1000000") } }), // $1.00
     ]);
     await expect(client.read("https://ex.com")).rejects.toBeInstanceOf(SpendCapError);
     expect(signed()).toBe(false);
+    expect(produced()).toBe(0);
   });
 
   it("no maxSpendUsd + maxTollUsd: a 402 above base + sent max_toll_usd is REFUSED, no signature", async () => {
     // Authorized ceiling = base $0.004 + toll $0.02 = $0.024; a $0.50 quote must be refused.
-    const { client, signed } = walletWith({}, [
+    const { client, signed, produced } = walletWith({}, [
       () =>
         new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("500000") } }), // $0.50
     ]);
@@ -98,6 +113,7 @@ describe("spend caps", () => {
       SpendCapError,
     );
     expect(signed()).toBe(false);
+    expect(produced()).toBe(0);
   });
 
   it("no maxSpendUsd: an HONEST quote at exactly the base price is signed (guard does not false-reject)", async () => {
@@ -107,7 +123,7 @@ describe("spend caps", () => {
     // NB: this assertion is only meaningful while the literal EQUALS READ_BASE_USD. If a price
     // change updates the constant but not this literal, the test still passes while silently
     // testing "below base" instead of "at base" — which is exactly the hole it exists to catch.
-    const { client, signed } = walletWith({}, [
+    const { client, signed, produced } = walletWith({}, [
       () => new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("4000") } }), // $0.004 = base
       () =>
         new Response(
@@ -118,6 +134,7 @@ describe("spend caps", () => {
     const r = await client.read("https://ex.com");
     expect(r.markdown).toBe("m");
     expect(signed()).toBe(true);
+    expect(produced()).toBe(1); // proves the signer spy actually observes signing
   });
 
   it("maxSessionSpendUsd: first paid read resolves, second is refused at the cap BEFORE signing (one signature total)", async () => {
@@ -153,10 +170,12 @@ describe("spend caps", () => {
   });
 
   it("no maxSpendUsd + maxTollUsd: an HONEST quote at exactly base + toll is signed (boundary, no false-reject)", async () => {
-    // base $0.002 (2000) + toll $0.02 (20000) = 22000 atomic = $0.022.
-    const { client, signed } = walletWith({}, [
+    // base $0.004 (4000) + toll $0.02 (20000) = 24000 atomic = $0.024 — the EXACT authorized
+    // ceiling. Must be signed, not refused (PRICE_EPS absorbs float). Quoting below the ceiling
+    // (the old 22000) would not exercise the boundary the sibling at-base test's comment warns of.
+    const { client, signed, produced } = walletWith({}, [
       () =>
-        new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("22000") } }),
+        new Response("{}", { status: 402, headers: { "PAYMENT-REQUIRED": challenge("24000") } }),
       () =>
         new Response(
           JSON.stringify({
@@ -172,5 +191,6 @@ describe("spend caps", () => {
     const r = await client.read("https://ex.com", { maxTollUsd: 0.02 });
     expect((r as { toll?: unknown }).toll).toBeTruthy();
     expect(signed()).toBe(true);
+    expect(produced()).toBe(1);
   });
 });

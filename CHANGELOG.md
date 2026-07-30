@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-07-29
+
+### Added
+
+- New `ScoutErrorCode` members surfaced from the `@agentx402-ai/core` 0.2.0 payment/transport
+  guards: `network_error`, `aborted`, `unpinned_network`, `unsupported_network`, `network_mismatch`,
+  `asset_mismatch`, `domain_mismatch`, `invalid_challenge`, `invalid_amount`. A client that pins its
+  network and signs an honest challenge never sees these — they identify a spoofed/mismatched
+  challenge or a transport failure.
+
+### Changed
+
+- Dependency floor `@agentx402-ai/core` raised to `^0.2.0`: safe-by-default money path (the
+  network + canonical-asset pin is now required before an EIP-3009 authorization is signed), a
+  typed challenge taxonomy, and abort-aware retry. AgentScout's own API is unchanged apart from the
+  added error codes above.
+
+### Fixed
+
+- **Spend caps and tolls fail closed on a malformed value.** A non-finite `maxSpendUsd`,
+  `maxSessionSpendUsd`, or `maxTollUsd` (e.g. `NaN` from a bad parse, or a non-numeric value in
+  `config.json`) used to silently disable the cap — the exact "malformed cap becomes unlimited"
+  hole the caps exist to prevent. Such a value now throws `invalid_config` at construction or before
+  the request, and never signs.
+- **Async extraction** now returns the fetched page URL (was the job id) and carries the usage/toll
+  accounting through; the transparent poll loop is bounded by `maxWaitMs` and no longer rejects
+  `extract()` with a raw `TypeError` on a transient network error.
+
 ## [0.3.1] - 2026-07-29
 
 ### Changed
@@ -9,6 +37,27 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Dependency floors raised to match what installs already resolve: `viem` `^2.55.10`
   (Dependabot) and `@agentx402-ai/core` `^0.1.1` (metadata-only core release: corrected
   npm repository link). No runtime behavior change in this package.
+
+## [0.3.0] — 2026-07-27
+
+### Added
+
+- **Transparent async extraction.** A document too large for a single pass is extracted server-side
+  as a job; the SDK now polls it to completion so `await extract(...)` returns the result directly —
+  the async hop is invisible to callers. Polling is free and bounded by `maxWaitMs` (default 120s);
+  on timeout the error carries the still-running job's status URL.
+- **`read({ links })`.** Opt-in structured outbound links (`PageLink[]`) parsed from the page —
+  absolute, deduplicated, `http(s)`-only, capped at 200 in document order. Off by default and costs
+  nothing extra (links are collected while the HTML is already parsed, never sent to the model).
+- **Extraction metadata** on `ExtractResult.extraction`: `input_truncated`, `winning_rung`
+  (`8b` / `repair` / `70b` / `json` / `chunked`), plus `chunks` / `merge_conflicts` on the chunked
+  path — so callers can judge how an answer was produced.
+
+### Changed
+
+- Documented the source-verification guarantee on `ExtractResult`: token-like array items are
+  checked against the fetched page and dropped if absent (a shape + literal-token check, not a
+  truth guarantee for prose or numbers).
 
 ## [0.2.0] — 2026-07-26
 

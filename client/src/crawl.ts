@@ -79,7 +79,7 @@ export function makeCrawl(ctx: CrawlContext): Crawl {
       url: reqUrl,
       idempotencyKey: freshNonce(),
       label: "crawl submit failed",
-      // Authorized ceiling = pinned per-page base (max_pages × $0.003) + the max_toll_usd sent.
+      // Authorized ceiling = pinned per-page base (max_pages × $0.004) + the max_toll_usd sent.
       authorizedCeilingUsd: maxPages * CRAWL_PAGE_USD + (opts.maxTollUsd ?? 0),
       buildRequest: (headers) => ({
         method: "POST",
@@ -122,6 +122,22 @@ export function makeCrawl(ctx: CrawlContext): Crawl {
       if ("status" in s && s.status === "errored") {
         const err = (s as { error?: string }).error ?? "crawl errored";
         throw new AgentScoutError(`crawl ${jobId} errored: ${err}`, "crawl_errored", 0, err);
+      }
+      if ("status" in s && s.status === "failed") {
+        // Dead-lettered before the crawl could start — terminal; the full budget is already
+        // refunded as credits, so surface the amount, not just the hint.
+        const body = s as {
+          code?: string;
+          hint?: string;
+          refunded_credits?: number;
+        };
+        const hint = body.hint ?? "the crawl could not be started";
+        throw new AgentScoutError(
+          `crawl ${jobId} failed: ${hint} (refunded_credits: ${body.refunded_credits ?? 0})`,
+          body.code ?? "job_dropped",
+          0,
+          hint,
+        );
       }
       if (Date.now() + pollIntervalMs >= deadline) {
         return { status: "pending", jobId }; // resumable handle — crawl still running server-side

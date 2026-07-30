@@ -36,13 +36,34 @@ export type ScoutErrorCode =
   | "schema_too_large"
   | "thin_content"
   | "extraction_failed"
+  // async extract job: the failure code (server-supplied or the SDK default) and the
+  // client-side poll timeout
+  | "extract_failed"
+  | "extract_job_timeout"
   | "rate_limited"
   | "internal_error"
   | "upstream_unavailable"
-  // client-side, pre-request/pre-sign:
+  // generic fallback in scoutErrorFromResponse when the response body carries no `code`
+  | "request_failed"
+  // transport, from the core fetch/retry layer:
+  | "network_error"
+  | "aborted"
+  // client-side, pre-request/pre-sign — the core x402/EIP-712 payment guards throw these BEFORE
+  // any signature, so a spoofed / mismatched / hostile challenge is rejected, never signed:
   | "payto_mismatch"
   | "spend_cap_exceeded"
+  | "unpinned_network"
+  | "unsupported_network"
+  | "network_mismatch"
+  | "asset_mismatch"
+  | "domain_mismatch"
+  | "invalid_challenge"
+  | "invalid_amount"
   | "crawl_errored"
+  // crawl dead-lettered before it could start (queue delivery exhausted) — terminal, distinct
+  // from crawl_errored (which means the crawl ran and blew up). The worker's own status-poll
+  // `code`, forwarded verbatim; refunded_credits/hint on the body cover the refund.
+  | "job_dropped"
   | "invalid_config";
 
 /**

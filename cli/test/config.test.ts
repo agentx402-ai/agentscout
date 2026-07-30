@@ -30,9 +30,29 @@ describe("resolveConfig precedence + fail-closed", () => {
     );
     expect(c.privateKey).toBe("0xabc");
   });
+  it("ignores a file-supplied secret even when env is unset (no `?? file.<secret>` fallback)", () => {
+    // The prior test only proves env WINS over file. This pins the env-UNSET case: a file-supplied
+    // privateKey/accountKey must be ignored entirely — the leak a `?? file.privateKey` regression
+    // would introduce, which env-wins precedence would never catch.
+    const c = resolveConfig(
+      {},
+      {},
+      () => ({ privateKey: "0xFROMFILE", accountKey: `ak_${"b".repeat(64)}` }) as never,
+    );
+    expect(c.privateKey).toBeUndefined();
+    expect(c.accountKey).toBeUndefined();
+  });
   it("fails closed on a malformed numeric env (a typo'd cap must not become unlimited)", () => {
     expect(() => resolveConfig({}, { AGENTSCOUT_MAX_SPEND_USD: "abc" }, () => null)).toThrow(
       /AGENTSCOUT_MAX_SPEND_USD/,
+    );
+  });
+  it("fails closed on a malformed cap from the config FILE too, not just env", () => {
+    // Regression: file.maxSpendUsd used to flow through unvalidated (a bare JSON.parse cast), so a
+    // typo'd config.json cap ("$0.05", "0,05", …) silently disabled the guard. It must fail closed
+    // the same as the env path.
+    expect(() => resolveConfig({}, {}, () => ({ maxSpendUsd: "$0.05" }) as never)).toThrow(
+      /maxSpendUsd/,
     );
   });
 });

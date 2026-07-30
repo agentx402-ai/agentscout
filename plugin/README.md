@@ -9,8 +9,8 @@ via x402 — wallet-native by default, with an opt-in account-key (`ak_` bearer)
 wallets. Scout content is **not** encrypted (it is public web data).
 
 > **Prerequisite:** the plugin runs `npx -y @agentscout/cli mcp`, so [`@agentscout/cli`](../cli)
-> must be published to npm (or resolvable via `npx`). It is **not yet published** — until then,
-> use the local-checkout method in step 1.
+> must be resolvable via `npx`. It is published to npm, so `npx` fetches it on first use — no local
+> checkout required (the local-checkout method below is only for development).
 >
 > **Windows:** `.mcp.json` uses `"command": "npx"`. Claude Code's MCP launcher resolves the
 > `npx.cmd` shim on Windows automatically, so this works as-is. Other MCP clients that spawn the

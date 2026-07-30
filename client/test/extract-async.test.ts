@@ -119,4 +119,43 @@ describe("extract — async job handoff is transparent to the caller", () => {
     expect(res.data).toEqual({ a: "x" });
     expect(calls).toBe(1); // one request, no status poll
   });
+
+  it("returns the extracted page url on the async path, not the job id", async () => {
+    // Regression (review finding #2): awaitExtractJob returned { url: job.job_id, ... }, so a caller
+    // reading result.url got an opaque job id instead of the page they extracted.
+    const srv = jobServer([
+      {
+        job_id: "job-1",
+        status: "complete",
+        data: { a: "x" },
+        extraction: { input_truncated: false, winning_rung: "chunked" },
+      },
+    ]);
+    const c = new AgentScout({ signer, endpoint, fetch: srv.fetchImpl });
+    const res = await c.extract("https://big.test/article", SCHEMA, { maxWaitMs: 30_000 });
+    expect(res.url).toBe("https://big.test/article");
+  });
+
+  it("a thrown fetch mid-poll is transient (retried within the deadline), not a fatal error", async () => {
+    // Regression (review finding #3): the poll used a bare fetch, so a thrown fetch (network blip)
+    // rejected extract() with a raw TypeError instead of being retried until the deadline.
+    let n = 0;
+    const fetchImpl = (async (_u: unknown, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ job_id: "job-1", status: "queued", status_url: STATUS_URL }),
+          { status: 202 },
+        );
+      }
+      n++;
+      if (n === 1) throw new TypeError("network blip");
+      return new Response(
+        JSON.stringify({ job_id: "job-1", status: "complete", data: { a: "ok" } }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const c = new AgentScout({ signer, endpoint, fetch: fetchImpl });
+    const res = await c.extract("https://big.test/", SCHEMA, { maxWaitMs: 30_000 });
+    expect(res.data).toEqual({ a: "ok" });
+  });
 });
