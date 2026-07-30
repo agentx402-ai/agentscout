@@ -347,15 +347,25 @@ jobs:
       # the verification above and the publishes below share a single resolution path, and
       # it is the invocation the sibling agentkv repo's published provenance was produced by
       # (0.2.2, 0.3.0-rc.1, 0.3.0 all carry SLSA attestations).
-      #   HISTORY, stated accurately because it decides what to try if this ever regresses:
-      #   THIS repo abandoned `-w` in cfb8334 after npm failed ENEEDAUTH in ~1.5s without
-      #   attempting the exchange. That was NOT the v6 `_authToken` placeholder — the strip
-      #   step was already present and applied at the time (see cfb8334^ and its commit
-      #   message). The cause was never isolated. What differs now: setup-node v7 and the
-      #   bundled npm, on which agentkv publishes `-w` successfully. If a release here ever
-      #   ENEEDAUTHs again, the known-good fallback FOR THIS REPO is the shape it used for
-      #   0.2.0/0.3.0/0.3.1 — `working-directory:` into each package plus a bare
-      #   `npm publish` — and restoring it is a legitimate fix, not a regression.
+      #   HISTORY — read this before changing the invocation, because it has been misdiagnosed
+      #   twice and each wrong answer cost a run of CI archaeology:
+      #   cfb8334 abandoned `-w` after npm failed ENEEDAUTH in ~1.5s without attempting the
+      #   exchange, reasoning that the workspace flag was "the only remaining difference from
+      #   every known-good example". Both that and a later comment blaming the setup-node v6
+      #   `_authToken` placeholder are WRONG, and the 2026-07-26 incident write-up settles it:
+      #     - the flag was ruled out BY MEASUREMENT — the identical failure occurred publishing
+      #       from inside each package directory, with no `-w` anywhere;
+      #     - the placeholder was already stripped when `-w` failed (see cfb8334^), and npm
+      #       tries OIDC before any static credential, so it only ever MASKED the error;
+      #     - the actual cause was the npm trusted-publisher config for @agentscout/client
+      #       naming a transposed org, `agent402x-ai` (a name nobody owned). Fixing that made
+      #       publishing work.
+      #   npm reports a config mismatch as "OIDC token exchange error - package not found",
+      #   which means "no publisher config matched", NOT "no such package" — the string that
+      #   sent both misdiagnoses down the wrong path.
+      #   SO: if a release here ever ENEEDAUTHs again, check `npm trust list` for BOTH packages
+      #   FIRST. Do not touch the workspace flag: v0.4.0-rc.1 published from this exact
+      #   invocation, and its provenance attests refs/tags/v0.4.0-rc.1.
       - name: Publish client (verbose — surfaces the OIDC exchange result)
         env:
           NPM_TAG: ${{ needs.build.outputs.npm_tag }}
