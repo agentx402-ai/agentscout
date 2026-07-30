@@ -64,6 +64,32 @@ export type ScoutErrorCode =
   // from crawl_errored (which means the crawl ran and blew up). The worker's own status-poll
   // `code`, forwarded verbatim; refunded_credits/hint on the body cover the refund.
   | "job_dropped"
+  // Worker-emitted codes the SDK previously did not declare (2026-07-30). Grouped by
+  // where the worker produces them, because the surface differs: the first three are
+  // HTTP error envelopes, the next three arrive on the async-extract job STATUS poll
+  // (same family as extract_failed / extract_job_timeout above), and the last is
+  // forwarded verbatim from the ledger by /extract's fund-gate.
+  // A crawl that was dead-lettered and had its whole page budget refunded.
+  | "job_refunded"
+  // A same-key replay whose persisted result has aged out of its 24h cache; the
+  // operation is NOT re-run, so the caller must resubmit under a fresh key.
+  | "result_expired"
+  // 413: the crawl submit body exceeded the server's cap, refused before parsing.
+  | "body_too_large"
+  // Async extract job: the upstream page read failed; nothing was charged.
+  | "fetch_failed"
+  // Async extract job: exceeded its window before completing; nothing was charged.
+  | "job_lost"
+  // Async extract job: no wallet address on the job, so it could never charge.
+  | "payment_failed"
+  // 401 from the ledger, forwarded by /extract's fund-gate: a forged or
+  // unprovisioned account key resolves to no account.
+  | "account_not_found"
+  // 401 on /extract or /read when auth was rejected after the request was already
+  // in flight — a replayed EIP-712 nonce on either route, or an unprovisioned bearer
+  // account on /read. Deliberately generic: several distinct auth failures collapse
+  // onto one HTTP status at that point, so the worker cannot say which.
+  | "auth_required"
   | "invalid_config";
 
 /**
