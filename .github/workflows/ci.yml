@@ -91,7 +91,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - name: All five version sources + the cli→client dep must match (RELEASING.md)
+      - name: All six version sources + the cli→client dep must match (RELEASING.md)
         run: |
           node -e '
             const fs = require("fs");
@@ -104,6 +104,9 @@ jobs:
               clientConst: konst("client/src/index.ts"),
               cliConst: konst("cli/src/version.ts"),
               plugin: ver("plugin/agentscout/.claude-plugin/plugin.json"),
+              // The plugin RUNTIME pin. Without it the lockstep never bound what actually
+              // runs: .mcp.json spawned whatever @agentscout/cli was latest at install time.
+              mcpPin: (read("plugin/agentscout/.mcp.json").match(/"@agentscout\/cli@([^"]+)"/) || [])[1],
             };
             const uniq = [...new Set(Object.values(v))];
             if (uniq.length !== 1 || uniq[0] === undefined) {
@@ -113,5 +116,5 @@ jobs:
             if (dep !== "^" + v.clientPkg) {
               console.error(`::error::cli dependency on @agentscout/client (${dep}) != ^${v.clientPkg}`); process.exit(1);
             }
-            console.log("ok: all 5 version sources + cli->client dep at " + uniq[0]);
+            console.log("ok: all 6 version sources + cli->client dep at " + uniq[0]);
           '
