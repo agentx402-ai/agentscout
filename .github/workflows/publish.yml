@@ -197,8 +197,10 @@ jobs:
           # on a 409 conflict.
           overwrite: true
           # The publish job consumes this immediately, so this only has to outlive a later
-          # "Re-run failed jobs" on a release that failed at the publish step — which reuses
-          # the run's existing artifact rather than rebuilding it.
+          # "Re-run failed jobs" on a release that failed in the publish job — which reuses
+          # the run's existing artifact rather than rebuilding it. Note that a re-run resumes
+          # at the START of the publish job, not at the step that failed; the publish steps
+          # carry their own already-published guard so a half-published release can finish.
           retention-days: 7
 
   # Privileged: holds trusted-publishing rights for both packages. Runs no dependency code.
@@ -210,15 +212,10 @@ jobs:
     # `release` or npm rejects the publish. A branch carrying a modified copy of this
     # workflow with `environment:` stripped out mints a token that no longer matches the
     # binding, and cannot publish. (Fails closed.)
-    #   KNOWN GAP: unlike the sibling agentx402-ai/agentkv and agentx402-ai/core repos, this
-    #   repo's `release` environment carries NO deployment branch policy, so the ref guard in
-    #   the `build` job is the only thing keeping a non-tag ref out of here. Closing that is a
-    #   repo-settings change, not a workflow change:
-    #     gh api -X PUT repos/agentx402-ai/agentscout/environments/release \
-    #       -F 'deployment_branch_policy[protected_branches]=false' \
-    #       -F 'deployment_branch_policy[custom_branch_policies]=true'
-    #     gh api -X POST repos/agentx402-ai/agentscout/environments/release/deployment-branch-policies \
-    #       -f name='v*' -f type=tag
+    # The environment also carries a deployment branch policy admitting only the `v*` TAG
+    # pattern (matching the sibling agentx402-ai/agentkv and agentx402-ai/core repos), so a
+    # non-tag ref is refused by repo settings even if the in-workflow ref guard were removed
+    # or edited on a branch. Two independent gates; keep both.
     environment: release
     permissions:
       contents: read
@@ -239,9 +236,9 @@ jobs:
           # workaround existed for setup-node v6, which wrote a placeholder
           # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` that npm then preferred
           # over the OIDC exchange, authenticated as anonymous, and got a misleading E404
-          # (actions/setup-node#1551). v7 removed that dummy export (#1558), and the sibling
-          # agentx402-ai/agentkv and agentx402-ai/core repos publish with provenance on this
-          # exact configuration — do not "fix" this by copying the strip step back in.
+          # (actions/setup-node#1551). v7 removed that dummy export (#1558), so there is no
+          # placeholder left to strip, and the sibling agentx402-ai/agentkv and
+          # agentx402-ai/core repos publish with provenance on this exact configuration.
           registry-url: https://registry.npmjs.org
 
       - run: npm --version # publish provenance path needs an intact npm bundle
@@ -273,10 +270,6 @@ jobs:
       - name: Verify the downloaded artifact is a complete build
         run: |
           set -euo pipefail
-          # upload-artifact does not carry the executable bit across. npm re-chmods bins at
-          # install time, so this is belt-and-braces — but the tarball should still match
-          # what a local `npm pack` produces.
-          chmod +x cli/dist/cli.js
           # Heredoc rather than `node -e '...'`: the graph walk below needs both quote
           # characters in its regexes, which a single-quoted shell string cannot carry.
           node - <<'NODE'
@@ -298,9 +291,10 @@ jobs:
           }
           // cli/dist is CODE-SPLIT: cli.js imports ./chunk-<hash>.js and ./mcp-<hash>.js,
           // whose names change with every build and so cannot be listed above. Walk the
-          // import graph instead — a truncated upload that dropped a chunk would otherwise
+          // import graph instead — an upload that DROPPED or ZEROED a chunk would otherwise
           // publish a CLI that dies with ERR_MODULE_NOT_FOUND on its first run, and only a
-          // new version could fix it.
+          // new version could fix it. (Scope: this catches missing/empty, not a partially
+          // written file — download-artifact v8 fails on digest mismatch, which does.)
           const seen = new Set();
           const queue = entries.filter((f) => /\.c?js$/.test(f));
           while (queue.length) {
@@ -326,6 +320,19 @@ jobs:
           }
           console.log("ok: artifact is a closed module graph over " + seen.size + " file(s)");
           NODE
+          # upload-artifact does not preserve the executable bit — every file arrives 0644.
+          # Restore it on ALL of cli/dist, not just the bin: tar records each file's mode and
+          # npm keeps the exec bit in the tarball, so chmod'ing only cli.js publishes a
+          # tarball whose checksum differs from a local `npm pack` of the same build
+          # (measured: 439dd9c4… vs afd31bf7…, identical 8668 bytes). The chunks are imported
+          # rather than exec'd, so this is about keeping the artifact path byte-reproducible
+          # against a local build, not about runtime behavior.
+          #   client/dist is deliberately NOT chmod'd: nothing in it is executable locally
+          #   either, npm normalizes it to 0644 both ways, and marking it 0755 here would
+          #   introduce exactly the mismatch this is removing for cli.
+          # Runs AFTER the completeness check above so a wholly missing artifact reports the
+          # intended "missing or empty …" annotation rather than a raw chmod error.
+          chmod 755 cli/dist/*.js
           # --ignore-scripts throughout: nothing third-party may execute in this job (a
           # prepack would otherwise invoke tsup). This resolves the workspaces exactly the
           # way the publish steps below do, so what is checked here is what gets published.
@@ -339,13 +346,37 @@ jobs:
       # from the root package.json globs alone. Running everything from one directory means
       # the verification above and the publishes below share a single resolution path, and
       # it is the invocation the sibling agentkv repo's published provenance was produced by
-      # (0.2.2, 0.3.0-rc.1, 0.3.0 all carry SLSA attestations). An older comment here
-      # claimed `-w` skipped the OIDC exchange; that was the setup-node v6 `_authToken`
-      # placeholder, removed above, misattributed to the workspace flag.
+      # (0.2.2, 0.3.0-rc.1, 0.3.0 all carry SLSA attestations).
+      #   HISTORY, stated accurately because it decides what to try if this ever regresses:
+      #   THIS repo abandoned `-w` in cfb8334 after npm failed ENEEDAUTH in ~1.5s without
+      #   attempting the exchange. That was NOT the v6 `_authToken` placeholder — the strip
+      #   step was already present and applied at the time (see cfb8334^ and its commit
+      #   message). The cause was never isolated. What differs now: setup-node v7 and the
+      #   bundled npm, on which agentkv publishes `-w` successfully. If a release here ever
+      #   ENEEDAUTHs again, the known-good fallback FOR THIS REPO is the shape it used for
+      #   0.2.0/0.3.0/0.3.1 — `working-directory:` into each package plus a bare
+      #   `npm publish` — and restoring it is a legitimate fix, not a regression.
       - name: Publish client (verbose — surfaces the OIDC exchange result)
         env:
           NPM_TAG: ${{ needs.build.outputs.npm_tag }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          # RE-RUN RECOVERY. client publishes before cli, so a cli-side failure (registry
+          # blip, rate limit) leaves client already on npm. A re-run restarts this job at its
+          # FIRST step, so without this guard the client publish below dies EEXIST and cli is
+          # never reached — the release stays half-published, and because a run always
+          # executes the workflow file at its own tag there is no in-tag fix. Skipping an
+          # already-published EXACT version lets the re-run finish the other half.
+          # Gated on run_attempt so a FIRST attempt stays strict: a version that already
+          # exists then is a genuine error (wrong tag, or someone else holds that version)
+          # and must still fail loudly rather than be silently skipped. `npm view` is an
+          # unauthenticated public read and needs no credential.
+          set -euo pipefail
+          VER="$(node -p "require('./client/package.json').version")"
+          if [ "${RUN_ATTEMPT:-1}" -gt 1 ] && npm view "@agentscout/client@$VER" version >/dev/null 2>&1; then
+            echo "::notice::@agentscout/client@$VER already published (run attempt $RUN_ATTEMPT) — skipping to cli."
+            exit 0
+          fi
           set +e
           # --provenance is passed EXPLICITLY. npm's docs say trusted publishing attests
           # automatically, but multiple practitioner reports say the flag is still needed.
@@ -360,7 +391,16 @@ jobs:
       - name: Publish cli (verbose — same OIDC diagnostics as client)
         env:
           NPM_TAG: ${{ needs.build.outputs.npm_tag }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          # Same re-run guard as the client step above, for symmetry: a run that published
+          # both and then failed in a later step re-runs to green instead of EEXIST.
+          set -euo pipefail
+          VER="$(node -p "require('./cli/package.json').version")"
+          if [ "${RUN_ATTEMPT:-1}" -gt 1 ] && npm view "@agentscout/cli@$VER" version >/dev/null 2>&1; then
+            echo "::notice::@agentscout/cli@$VER already published (run attempt $RUN_ATTEMPT) — nothing to do."
+            exit 0
+          fi
           set +e
           npm publish -w cli --provenance --ignore-scripts --tag "$NPM_TAG" --loglevel verbose 2>&1 | tee /tmp/pub-cli.log
           CODE=${PIPESTATUS[0]}
@@ -403,7 +443,10 @@ jobs:
              placeholder one; v7, used here, does not).
 
           3) "EEXIST" / "cannot publish over previously published version"
-             Version already published. Bump every source per RELEASING.md and re-tag.
+             Version already published. On a RE-RUN this is handled for you — the publish
+             steps skip an already-published exact version so a half-published release can
+             finish. Seeing it on the FIRST attempt means the version is genuinely taken:
+             bump every source per RELEASING.md and re-tag.
 
           NOTE: a release re-run replays the workflow file snapshotted at the tag, so a fix
           on main is ignored. To ship a workflow fix, move the tag or cut the next version.
