@@ -70,12 +70,14 @@ wrong, not the test.
 
 ## Versioning & release
 
-`RELEASING.md` is authoritative. Five in-repo version sources move in lockstep — both
+`RELEASING.md` is authoritative. Six in-repo version sources move in lockstep — both
 `package.json`s, `client/src/index.ts` `VERSION`, `cli/src/version.ts` `VERSION`,
-`plugin/agentscout/.claude-plugin/plugin.json` `version` — plus a sixth cross-repo pin, the
-marketplace `source.ref` synced on release. CI's `versions` job cross-checks ALL FIVE in-repo
-sources AND the cli→client dependency range (`@agentscout/client` must be `^<clientVersion>`);
-update them together, by hand. Publishing happens via a GitHub Release → the `publish.yml`
+`plugin/agentscout/.claude-plugin/plugin.json` `version`, and `plugin/agentscout/.mcp.json`'s
+`@agentscout/cli@<version>` runtime pin — plus a seventh cross-repo pin, the marketplace
+`source.ref` synced on release. CI's `versions` job cross-checks ALL SIX in-repo sources AND
+the cli→client dependency range (`@agentscout/client` must be `^<clientVersion>`); update them
+together, by hand. The runtime pin matters because without it `.mcp.json` spawns whatever
+`@agentscout/cli` is latest at install time, so the lockstep never bound what actually runs. Publishing happens via a GitHub Release → the `publish.yml`
 OIDC trusted-publishing workflow (client before cli — dependency order). Never `npm publish`
 from a laptop.
 

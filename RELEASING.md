@@ -6,19 +6,22 @@ shared `@agentx402-ai/core` is released separately from [its own repo](https://g
 
 ## Version sources (keep in sync)
 
-Six sources move in lockstep on every release — five in this repo, plus one cross-repo pin:
+Seven sources move in lockstep on every release — six in this repo, plus one cross-repo pin:
 
 1. `client/package.json` — the published `@agentscout/client` version
 2. `cli/package.json` — the published `@agentscout/cli` version
 3. `client/src/index.ts` (`VERSION`) — reported by the SDK
 4. `cli/src/version.ts` (`VERSION`) — `agentscout --version` and the MCP server handshake
 5. `plugin/agentscout/.claude-plugin/plugin.json` (`version`)
-6. `agentx402-ai/claude-plugins` → `.claude-plugin/marketplace.json` (the `agentscout` plugin's
+6. `plugin/agentscout/.mcp.json` — the MCP runtime pin (`@agentscout/cli@<version>` in `args`).
+   Without it the plugin spawns whatever is latest at install time, so the lockstep binds the
+   declared version but not the one that actually runs.
+7. `agentx402-ai/claude-plugins` → `.claude-plugin/marketplace.json` (the `agentscout` plugin's
    `source.ref`) — the cross-repo pin the shared marketplace serves; synced on release (step 7).
 
-The CI `versions` job cross-checks all **five in-repo** sources AND the cli→client dependency
+The CI `versions` job cross-checks all **six in-repo** sources AND the cli→client dependency
 range (`cli/package.json`'s `@agentscout/client` must be `^<clientVersion>`); it fails if any
-diverge. The sixth (marketplace) pin lives in another repo and is synced automatically on release.
+diverge. The seventh (marketplace) pin lives in another repo and is synced automatically on release.
 
 ## Publish order (required)
 
@@ -32,8 +35,8 @@ consumers until the dependency lands; the enforced order prevents that.) If you 
 
 ## Steps
 
-1. Bump every version source above (the five in-repo sources and the cli→client dep range) to the
-   new version.
+1. Bump every version source above (the six in-repo sources, including the `.mcp.json` runtime
+   pin, and the cli→client dep range) to the new version.
 2. Update `CHANGELOG.md` — add a dated `## [<version>]` section for the release.
 3. `npm ci && npm run lint && npm run build && npm test` — all green.
 4. `npm pack --dry-run --workspaces` — confirm each tarball's contents.
