@@ -23,7 +23,7 @@ import type {
   UsageBlock,
 } from "./types";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.4.0-rc.1";
 
 export { generateAccountKey, isAccountKeyFormat } from "./account";
 export {
