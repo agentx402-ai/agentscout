@@ -45,6 +45,29 @@ consumers until the dependency lands; the enforced order prevents that.) If you 
 6. Cut the GitHub Release: `gh release create v<version> --generate-notes`. This tags AND
    publishes a Release — a plain `git push --tags` will NOT fire the publish or the marketplace
    auto-sync. Publishing the Release runs `publish.yml` (OIDC trusted publishing, client then cli).
+
+### Prereleases
+
+A tag with a semver prerelease suffix (`v0.5.0-rc.1`) publishes to the **`next`** npm dist-tag,
+never `latest`, so `npm install @agentscout/cli` keeps resolving to the last stable release. Cut
+it with `gh release create v0.5.0-rc.1 --prerelease --generate-notes`. The marketplace pin is
+deliberately NOT moved by a prerelease — `marketplace.json` serves one `source.ref` per plugin,
+so pinning an rc would point every plugin install at a prerelease CLI.
+
+### If the publish fails
+
+`publish.yml` runs from the tag it publishes, so a fix pushed to `main` does not apply to an
+already-cut Release. Recovery depends on what failed:
+
+- **Transient (registry blip, rate limit):** "Re-run all jobs" on the run, or
+  `gh workflow run publish.yml --ref v<version>`. It must run FROM THE TAG — a branch dispatch
+  is refused, because npm builds provenance from `GITHUB_REF` and a dispatch from `main` would
+  attest the tag's code under main's HEAD. There is no `tag` input for this reason.
+- **Half-published** (client landed, cli did not): re-run. The publish steps skip an
+  already-published exact version on a re-run attempt, so the run completes the missing half.
+- **A bug in the workflow itself:** it cannot be fixed by re-running, since the run executes the
+  workflow file at its own ref. Move the tag onto a commit carrying both the fix and the matching
+  versions, or bump every source and cut the next version.
 7. The marketplace pin then syncs automatically: publishing the Release dispatches to
    `agentx402-ai/claude-plugins` (`.github/workflows/notify-marketplace.yml` here), which pins the
    `agentscout` plugin's `source.ref` to `v<version>`. Manual fallback: re-run
