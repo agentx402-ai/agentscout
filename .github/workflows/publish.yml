@@ -45,12 +45,12 @@ jobs:
             echo "::error::refusing to publish a ref that is not a vX.Y.Z tag: $TAG"
             exit 1
           }
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Publish the TAGGED source, never the branch HEAD a dispatch ran from: on a release
           # event this is the released tag; on workflow_dispatch it is the required `tag` input.
           ref: ${{ github.event.release.tag_name || inputs.tag }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           # Node 24 bundles npm >= 11.5.1 (required for OIDC trusted publishing)
           # NATIVELY. Do not reintroduce `npm install -g npm@latest`: npm
@@ -109,7 +109,7 @@ jobs:
       #
       # There is no cheap way to test publish authorization short of publishing. So we
       # publish, and explain clearly IF it fails (see the failure step at the end).
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
       # Published from INSIDE each workspace, not via `npm publish -w <name>`. The
