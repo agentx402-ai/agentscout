@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
-## [0.4.0-rc.1] — 2026-07-30
+## [0.4.0] — 2026-07-30
+
+> Previewed as `0.4.0-rc.1` under the `next` dist-tag before this release; the contents are identical.
 
 ### Added
 
