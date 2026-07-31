@@ -1,4 +1,8 @@
-import { fetchWithRetry as coreFetchWithRetry } from "@agentx402-ai/core";
+import {
+  assertFiniteUsd as coreAssertFiniteUsd,
+  fetchWithRetry as coreFetchWithRetry,
+  SpendLedger,
+} from "@agentx402-ai/core";
 import { getAddress } from "viem";
 import { isAccountKeyFormat } from "./account";
 import { type Crawl, makeCrawl } from "./crawl";
@@ -93,9 +97,14 @@ function isAsyncJob(v: unknown): v is AsyncExtractJob {
  * or the unvalidated config.json path, can hand the constructor any value).
  */
 function assertFiniteUsd(value: unknown, label: string): void {
-  if (value === undefined || value === null) return;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new AgentScoutError(`${label} must be a non-negative finite number`, "invalid_config", 0);
+  try {
+    coreAssertFiniteUsd(value, label);
+  } catch (e) {
+    // Core owns the RULE; this SDK owns its error IDENTITY. `AgentScoutError` is exported and
+    // callers catch it, so letting core's base `AgentXError` escape here would leave this the
+    // one throw site a `catch (e) { if (e instanceof AgentScoutError) }` silently misses — a
+    // fail-open in error handling. `e.code` is unchanged either way.
+    throw new AgentScoutError((e as Error).message, "invalid_config", 0);
   }
 }
 
@@ -110,16 +119,14 @@ export class AgentScout {
   readonly maxRetries: number;
   protected readonly timeoutMs?: number;
   protected readonly fetchImpl?: typeof fetch;
-  protected sessionSpentUsd = 0;
   /**
-   * USD authorized by ops that have passed the session-cap check but not yet settled.
-   * `recordSpend` only increments AFTER the paid round-trip, so without this, N concurrent
-   * ops all check against the same stale counter, all pass, and all sign real EIP-3009
-   * authorizations — the cumulative cap provided NO bound under concurrency. Reserved
-   * synchronously at the check (no await in between) and released when the op settles or
-   * fails; settled amounts move to `sessionSpentUsd` via `recordSpend`.
+   * The spend bounds, including the in-flight reservation that makes the cumulative cap hold
+   * under concurrency. Shared with the other service SDKs via core: both repos carried their
+   * own copy under different names for the same function, and both drifted — this client's
+   * cumulative cap had no reservation at all until 2026-07-31, so three parallel reads each
+   * passed the same stale check and each signed.
    */
-  protected sessionReservedUsd = 0;
+  protected readonly ledger: SpendLedger;
   readonly crawl: Crawl;
 
   constructor(opts: AgentScoutOptions) {
@@ -157,6 +164,12 @@ export class AgentScout {
     // silently disables the DEFAULT_MAX_OP_USD backstop, which only runs when maxSpendUsd is unset).
     assertFiniteUsd(this.maxSpendUsd, "maxSpendUsd");
     assertFiniteUsd(this.maxSessionSpendUsd, "maxSessionSpendUsd");
+    // Validated above with this SDK's own error class, so the ledger's identical re-check
+    // never fires — it would throw core's base type, which callers do not catch.
+    this.ledger = new SpendLedger({
+      maxSpendUsd: this.maxSpendUsd,
+      maxSessionSpendUsd: this.maxSessionSpendUsd,
+    });
     this.maxRetries = Math.max(0, Math.floor((opts as { retries?: number }).retries ?? 2));
     this.timeoutMs = (opts as { timeoutMs?: number }).timeoutMs;
     this.fetchImpl = (opts as { fetch?: typeof fetch }).fetch;
@@ -236,28 +249,18 @@ export class AgentScout {
     return { path: p, url: u.toString() };
   }
 
+  // These four stay as named methods rather than inlined `this.ledger.*` calls: they are
+  // `protected`, so a subclass (including the white-box money tests) can drive them, and the
+  // names are what those call sites already use. The arithmetic itself now lives in core.
+
+  /** Throw `SpendCapError` if `usd` breaches the per-call or cumulative bound. */
   protected assertSpend(usd: number): void {
-    // Negated <= (not >): a non-finite operand then fails CLOSED instead of open. Hardening
-    // only — every input here is already validated finite (assertFiniteUsd on the caps, and
-    // core's digits-only check on a quoted amount), so this is not a reachable hole today.
-    if (this.maxSpendUsd !== undefined && !(usd <= this.maxSpendUsd)) {
-      throw new SpendCapError(`spend $${usd} exceeds per-call cap $${this.maxSpendUsd}`);
-    }
-    // In-flight reservations count against the cap alongside settled spend — see
-    // `sessionReservedUsd`. Negated <= for the same fail-closed reason as above.
-    if (
-      this.maxSessionSpendUsd !== undefined &&
-      !(this.sessionSpentUsd + this.sessionReservedUsd + usd <= this.maxSessionSpendUsd)
-    ) {
-      throw new SpendCapError(
-        `spend $${usd} would exceed session cap $${this.maxSessionSpendUsd} ` +
-          `(spent $${this.sessionSpentUsd}, in flight $${this.sessionReservedUsd})`,
-      );
-    }
+    this.ledger.assertSpend(usd);
   }
 
+  /** Move a settled amount into cumulative spend. */
   protected recordSpend(usd: number): void {
-    this.sessionSpentUsd += usd;
+    this.ledger.record(usd);
   }
 
   /**
@@ -266,13 +269,7 @@ export class AgentScout {
    * cannot leak budget back.
    */
   protected reserveSession(usd: number): () => void {
-    this.sessionReservedUsd += usd;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.sessionReservedUsd -= usd;
-    };
+    return this.ledger.reserve(usd);
   }
 
   /**
@@ -282,8 +279,7 @@ export class AgentScout {
    * against an op that may never reach a 402.
    */
   protected assertAndReserveSpend(usd: number): () => void {
-    this.assertSpend(usd);
-    return this.reserveSession(usd);
+    return this.ledger.assertAndReserve(usd);
   }
 
   /**
