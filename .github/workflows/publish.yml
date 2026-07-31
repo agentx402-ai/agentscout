@@ -128,40 +128,16 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const read = (p) => fs.readFileSync(p, "utf8");
-            const ver = (p) => JSON.parse(read(p)).version;
-            const konst = (p) => (read(p).match(/VERSION = "([^"]+)"/) || [])[1];
-            const want = process.env.TAG.replace(/^v/, "");
-            const v = {
-              clientPkg: ver("client/package.json"),
-              cliPkg: ver("cli/package.json"),
-              clientConst: konst("client/src/index.ts"),
-              cliConst: konst("cli/src/version.ts"),
-              plugin: ver("plugin/agentscout/.claude-plugin/plugin.json"),
-              // The plugin RUNTIME pin — the sixth source, and the one ci.yml added most
-              // recently. Without it .mcp.json spawns whatever @agentscout/cli is latest at
-              // install time, so the lockstep would bind the declared version but not the
-              // one that actually runs.
-              mcpPin: (read("plugin/agentscout/.mcp.json").match(/"@agentscout\/cli@([^"]+)"/) || [])[1],
-            };
-            // Report a regex/parse miss as "(not found)" rather than letting JSON.stringify
-            // drop the undefined and print a bare {}.
-            const bad = Object.entries(v)
-              .filter(([, got]) => got !== want)
-              .map(([k, got]) => [k, got === undefined ? "(not found)" : got]);
-            if (bad.length) {
-              console.error("::error::tag " + process.env.TAG + " does not match: " + JSON.stringify(Object.fromEntries(bad)));
-              process.exit(1);
-            }
-            const dep = JSON.parse(read("cli/package.json")).dependencies["@agentscout/client"];
-            if (dep !== "^" + want) {
-              console.error("::error::cli dependency on @agentscout/client (" + dep + ") != ^" + want);
-              process.exit(1);
-            }
-            console.log("ok: tag and all 6 version sources at " + want);
-          '
+          # The same script ci.yml's `versions` job runs on every pull request, here handed
+          # the resolved tag so each of the six sources is checked against IT, not merely
+          # against the others. One implementation, two callers — the guard and the CI check
+          # can no longer drift apart, which is what made the two inline copies a hazard.
+          #
+          # Calling it does NOT weaken this job's "runs no third-party code before the build"
+          # property: it is first-party in-repo code, from this tag's own checkout, with no
+          # dependencies beyond node: builtins — which is why it can run before `npm ci`.
+          # Keep it dependency-free.
+          node scripts/check-versions.mjs "$TAG"
 
       # --ignore-scripts: a compromised transitive dep must not get arbitrary execution just
       # from being installed. Nothing here needs an install script — the platform binaries
