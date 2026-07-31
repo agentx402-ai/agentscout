@@ -2,6 +2,60 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+> **Three of these can break a setup that previously appeared to work.** Each replaces a silent
+> degradation with a hard, typed failure, so a configuration that was quietly being ignored now
+> reports itself instead of running on defaults you did not choose. All three are `invalid_config`.
+
+- **A corrupt or unreadable `config.json` now throws instead of being treated as absent.** Bad
+  JSON, a non-object payload, and permission errors previously all returned "no config", so a
+  truncated file — what a non-atomic write plus a crash produces — silently dropped a persisted
+  spend cap **and** reverted the endpoint to the hosted default. Genuine absence still means "no
+  config". *If you upgrade and start seeing this, the file was already being ignored: fix or
+  remove it.*
+- **`endpoint` must be an absolute `http(s)` URL, validated at construction.** Any truthy value
+  was accepted before, so a bare host or a non-`http(s)` scheme only surfaced later as an opaque
+  `Invalid URL` — possibly from a paying request — and a non-string from `config.json` died with a
+  raw `TypeError`. The endpoint decides which host issues the `402` a wallet signs against, so it
+  is now pinned at construction like `expectedPayTo`.
+- **A corrupt `wallet.json` now throws instead of reading as "no wallet".** A truncated file
+  holding a *funded* key looked absent, after which every operation failed on a raw `EEXIST` from
+  the attempt to mint a replacement. The error names the path and says to inspect rather than
+  delete it. This matches the absent-vs-corrupt distinction already applied to `account.json`.
+- **`max_toll_usd` in account-key mode.** A *configured default* (`AGENTSCOUT_MAX_TOLL_USD`, or the
+  plugin's `max_toll_usd`) is now ignored in account-key mode, as the plugin already documented.
+  It was previously applied unconditionally, which made `scout_read`, `scout_extract` and
+  `scout_crawl` all throw `tolls_require_x402` before issuing a request — one configuration field
+  silently disabled the entire paid surface. An *explicitly requested* `max_toll_usd` is still
+  refused, since silently dropping a cap the caller asked for on a paid verb would be worse.
+- **The paid MCP tools now declare `destructiveHint: false`.** The field defaults to `true` per the
+  MCP specification, so `scout_read`, `scout_extract` and `scout_crawl` were advertising a web
+  fetch as potentially destructive. `readOnlyHint` is unchanged and remains truthful: a paid verb
+  is never marked read-only.
+
+### Added
+
+- **`agentscout wallet`, plus a read-only `scout_wallet_address` MCP tool.** The CLI mints a wallet
+  on first use that must hold real USDC, but nothing exposed its address to fund it or its path to
+  back it up. Both report the address, where it came from, and what to do next — never the private
+  key.
+
+### Fixed
+
+- **The cumulative session spend cap now holds under concurrency.** `maxSessionSpendUsd` was
+  checked against a counter incremented only *after* a paid round-trip, so concurrent operations
+  all tested the same stale value, all passed, and all signed: three in-flight reads authorized
+  $0.012 against a $0.005 cap. The check now takes a synchronous reservation that is released when
+  the operation settles or fails. This was reachable in normal use — the MCP server builds one
+  client for its whole lifetime, so parallel tool calls share the counter, and a crawl commits
+  `max_pages` × the per-page price at once.
+- **A malformed spend cap in `config.json` is rejected even when a flag or environment variable
+  overrides it**, so a typo in a persisted cap surfaces at once rather than at whatever later
+  command omits the override.
+
 ## [0.4.0] — 2026-07-30
 
 > Previewed as `0.4.0-rc.1` under the `next` dist-tag before this release; the contents are identical.
