@@ -111,10 +111,43 @@ export class AgentScout {
   protected readonly timeoutMs?: number;
   protected readonly fetchImpl?: typeof fetch;
   protected sessionSpentUsd = 0;
+  /**
+   * USD authorized by ops that have passed the session-cap check but not yet settled.
+   * `recordSpend` only increments AFTER the paid round-trip, so without this, N concurrent
+   * ops all check against the same stale counter, all pass, and all sign real EIP-3009
+   * authorizations — the cumulative cap provided NO bound under concurrency. Reserved
+   * synchronously at the check (no await in between) and released when the op settles or
+   * fails; settled amounts move to `sessionSpentUsd` via `recordSpend`.
+   */
+  protected sessionReservedUsd = 0;
   readonly crawl: Crawl;
 
   constructor(opts: AgentScoutOptions) {
-    if (!opts?.endpoint) throw new AgentScoutError("endpoint is required", "invalid_config", 0);
+    // Fail fast (invalid_config) at construction. The endpoint decides WHICH host issues the 402
+    // a wallet then signs against, so a malformed one must not survive to a paying op: a
+    // non-string (a config.json value survives JSON.parse as any type) dies with a bare
+    // TypeError on `.replace`, and a relative or non-http(s) string ("scout.example",
+    // "ftp://h") only surfaces as an opaque "Invalid URL" from the first — possibly paying —
+    // request. Same construction-time pin as expectedPayTo below.
+    if (typeof opts?.endpoint !== "string" || opts.endpoint === "") {
+      throw new AgentScoutError(
+        "endpoint is required (an absolute http(s) URL)",
+        "invalid_config",
+        0,
+      );
+    }
+    try {
+      const u = new URL(opts.endpoint);
+      if (u.protocol !== "http:" && u.protocol !== "https:") {
+        throw new Error("unsupported protocol");
+      }
+    } catch {
+      throw new AgentScoutError(
+        `endpoint must be an absolute http(s) URL (got ${JSON.stringify(opts.endpoint)})`,
+        "invalid_config",
+        0,
+      );
+    }
     this.endpoint = opts.endpoint.replace(/\/+$/, "");
     this.network = (opts as { network?: string }).network ?? DEFAULT_NETWORK;
     this.maxSpendUsd = (opts as { maxSpendUsd?: number }).maxSpendUsd;
@@ -204,15 +237,21 @@ export class AgentScout {
   }
 
   protected assertSpend(usd: number): void {
-    if (this.maxSpendUsd !== undefined && usd > this.maxSpendUsd) {
+    // Negated <= (not >): a non-finite operand then fails CLOSED instead of open. Hardening
+    // only — every input here is already validated finite (assertFiniteUsd on the caps, and
+    // core's digits-only check on a quoted amount), so this is not a reachable hole today.
+    if (this.maxSpendUsd !== undefined && !(usd <= this.maxSpendUsd)) {
       throw new SpendCapError(`spend $${usd} exceeds per-call cap $${this.maxSpendUsd}`);
     }
+    // In-flight reservations count against the cap alongside settled spend — see
+    // `sessionReservedUsd`. Negated <= for the same fail-closed reason as above.
     if (
       this.maxSessionSpendUsd !== undefined &&
-      this.sessionSpentUsd + usd > this.maxSessionSpendUsd
+      !(this.sessionSpentUsd + this.sessionReservedUsd + usd <= this.maxSessionSpendUsd)
     ) {
       throw new SpendCapError(
-        `spend $${usd} would exceed session cap $${this.maxSessionSpendUsd} (spent $${this.sessionSpentUsd})`,
+        `spend $${usd} would exceed session cap $${this.maxSessionSpendUsd} ` +
+          `(spent $${this.sessionSpentUsd}, in flight $${this.sessionReservedUsd})`,
       );
     }
   }
@@ -222,12 +261,40 @@ export class AgentScout {
   }
 
   /**
+   * Reserve `usd` against the session cap SYNCHRONOUSLY. Returns a release fn the caller
+   * MUST invoke exactly once (in a `finally`) — releasing is idempotent so a double call
+   * cannot leak budget back.
+   */
+  protected reserveSession(usd: number): () => void {
+    this.sessionReservedUsd += usd;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.sessionReservedUsd -= usd;
+    };
+  }
+
+  /**
+   * `assertSpend` + a synchronous reservation, for a path that is about to SIGN. The caller
+   * MUST release in a `finally`. Pre-request estimates (assertTollBudget) use plain
+   * `assertSpend` instead — no payment is in flight there, so reserving would bill budget
+   * against an op that may never reach a 402.
+   */
+  protected assertAndReserveSpend(usd: number): () => void {
+    this.assertSpend(usd);
+    return this.reserveSession(usd);
+  }
+
+  /**
    * Built-in op-price ceiling. When no explicit maxSpendUsd is set, refuse a server-quoted 402
    * price above DEFAULT_MAX_OP_USD so a spoofed/compromised challenge cannot drain the wallet in
    * the default (no-cap) config. A per-op backstop beneath the tighter authorized-ceiling check.
    */
   protected assertOpPriceCeiling(usd: number): void {
-    if (this.maxSpendUsd === undefined && usd > DEFAULT_MAX_OP_USD) {
+    // Negated <= (not >): a non-finite operand then fails CLOSED instead of open (hardening;
+    // a quoted price is already digits-only-validated by core, so this cannot fire today).
+    if (this.maxSpendUsd === undefined && !(usd <= DEFAULT_MAX_OP_USD)) {
       throw new SpendCapError(
         `server-quoted op price $${usd} exceeds the built-in $${DEFAULT_MAX_OP_USD} op ceiling; ` +
           "set maxSpendUsd to allow a higher per-op charge",
@@ -317,7 +384,10 @@ export class AgentScout {
             `authorized ceiling $${spec.authorizedCeilingUsd} is not a finite amount; refusing to sign`,
           );
         }
-        if (usd > spec.authorizedCeilingUsd + PRICE_EPS) {
+        // Negated <= for the same fail-closed reason as the cap checks: a non-finite `usd`
+        // would make `usd > ceiling` vacuously false and sign. (Unreachable today — core
+        // validates a quoted amount as digits-only — so this is hardening, not a live hole.)
+        if (!(usd <= spec.authorizedCeilingUsd + PRICE_EPS)) {
           throw new SpendCapError(
             `server quoted $${usd} but the client only authorized $${spec.authorizedCeilingUsd} ` +
               "(pinned base price + max_toll_usd); refusing to sign",
@@ -328,20 +398,30 @@ export class AgentScout {
         //     op cap when no explicit maxSpendUsd is set.
         this.assertOpPriceCeiling(usd);
       }
-      // (c) Explicit per-op + cumulative session caps (always).
-      this.assertSpend(usd);
-      const paymentSignature = await buildPaymentHeader(this.requireSigner(), challenge, {
-        expectedNetwork: this.network,
-        expectedPayTo: this.expectedPayTo,
-        nonce: nonceFromIdempotencyKey(idempotencyKey),
-      });
-      res = await this.fetchWithRetry(url, () =>
-        spec.buildRequest({
-          "Idempotency-Key": idempotencyKey,
-          "PAYMENT-SIGNATURE": paymentSignature,
-        }),
-      );
-      if (res.ok) this.recordSpend(usd);
+      // (c) Explicit per-op + cumulative session caps (always), plus a SYNCHRONOUS reservation
+      //     of this op's amount. The reservation is what makes the session cap hold under
+      //     concurrency: `recordSpend` runs only after the paid round-trip below, so without it
+      //     N parallel ops would all check the same stale counter, all pass, and all sign.
+      //     Nothing may await between the check and the reservation.
+      const release = this.assertAndReserveSpend(usd);
+      try {
+        const paymentSignature = await buildPaymentHeader(this.requireSigner(), challenge, {
+          expectedNetwork: this.network,
+          expectedPayTo: this.expectedPayTo,
+          nonce: nonceFromIdempotencyKey(idempotencyKey),
+        });
+        res = await this.fetchWithRetry(url, () =>
+          spec.buildRequest({
+            "Idempotency-Key": idempotencyKey,
+            "PAYMENT-SIGNATURE": paymentSignature,
+          }),
+        );
+        if (res.ok) this.recordSpend(usd);
+      } finally {
+        // Settled ops moved their amount into `sessionSpentUsd`; failed ones charged nothing.
+        // Either way the in-flight reservation ends here, so a throw cannot leak budget.
+        release();
+      }
     }
 
     if (!res.ok) throw await this.asError(res, label);
