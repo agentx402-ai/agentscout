@@ -1,5 +1,11 @@
 import { readFileSync } from "node:fs";
-import { AgentScout, type AgentScoutOptions, isAccountKeyFormat } from "@agentscout/client";
+import { join } from "node:path";
+import {
+  AgentScout,
+  AgentScoutError,
+  type AgentScoutOptions,
+  isAccountKeyFormat,
+} from "@agentscout/client";
 import { privateKeyToAccount } from "viem/accounts";
 import { agentscoutDir, getOrCreateStoredWallet, peekStoredAccount } from "./keystore";
 
@@ -30,32 +36,94 @@ function envStr(v: string | undefined): string | undefined {
 }
 
 /**
- * Parse a non-negative numeric config value — an env-var string OR a config.json field. Unset,
- * empty, or null -> undefined (no cap — the documented default). A set-but-malformed or negative
- * value THROWS (fail closed): a typo'd spend/toll cap must not silently become "unlimited" on real
- * funds. Accepts `unknown` so a config.json value (JSON.parse can make it any type) is validated
- * the same as an env string, not trusted as a number.
+ * Parse a non-negative numeric ENV var. Unset, empty, or whitespace-only -> undefined (no cap —
+ * the documented default). A set-but-malformed or negative value THROWS (fail closed): a typo'd
+ * spend/toll cap must not silently become "unlimited" on real funds. Values that arrive already
+ * parsed from config.json go through numOrThrowVal instead — they are type-checked, not coerced.
  */
-function numOrThrow(v: unknown, name: string): number | undefined {
-  if (v === undefined || v === null) return undefined;
-  if (typeof v === "string" && v.trim() === "") return undefined;
-  const n = typeof v === "number" ? v : Number(v);
+function numOrThrow(v: string | undefined, name: string): number | undefined {
+  const s = envStr(v);
+  if (s === undefined) return undefined;
+  const n = Number(s);
   if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`${name} must be a non-negative number (got ${JSON.stringify(v)})`);
+    throw new Error(`${name} must be a non-negative number (got ${JSON.stringify(s)})`);
   }
   return n;
 }
 
 /**
- * Read the on-disk config file (`<AGENTSCOUT_HOME|~/.agentscout>/config.json`), tolerating
- * absence / bad JSON / permission errors by returning null. Secrets are NEVER read from here.
+ * The already-parsed (config.json) counterpart of numOrThrow. JSON.parse hands back whatever the
+ * file contained, so the value is TYPE-checked rather than coerced: a quoted or comma-decimal cap
+ * ("0,05") would coerce to NaN, and `usd > NaN` is always false — a cap that silently permits
+ * every spend. Explicit null reads as "not set", the same as an absent field.
+ */
+function numOrThrowVal(v: unknown, name: string): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+    throw new AgentScoutError(
+      `${name} must be a non-negative number (got ${JSON.stringify(v)})`,
+      "invalid_config",
+      0,
+    );
+  }
+  return v;
+}
+
+/**
+ * Type-check a string field from config.json. JSON.parse can produce any type here, so an
+ * `"endpoint": 8080` would otherwise flow on untouched and surface much later as a raw TypeError
+ * from deep inside the client, instead of a config error naming the offending field.
+ */
+function strOrThrowVal(v: unknown, name: string): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || v.trim() === "") {
+    throw new AgentScoutError(`${name} must be a non-empty string`, "invalid_config", 0);
+  }
+  return v.trim();
+}
+
+/**
+ * Read the on-disk config file (`<AGENTSCOUT_HOME|~/.agentscout>/config.json`). An ABSENT file
+ * (ENOENT) returns null — the documented default of "no file config". Every other failure FAILS
+ * LOUD as `invalid_config`, because this file can carry a spend cap and a non-production
+ * endpoint: silently downgrading a truncated file (what a non-atomic write plus a crash leaves
+ * behind), an unreadable one, or a non-object payload to "no config" would drop the persisted
+ * cap AND retarget requests at the production default. Same ABSENT-vs-CORRUPT split
+ * peekStoredAccount already makes for account.json. Secrets are NEVER read from here.
  */
 export function readConfigFile(env: NodeJS.ProcessEnv): Partial<ResolvedConfig> | null {
+  const file = join(agentscoutDir(env), "config.json");
+  let raw: string;
   try {
-    return JSON.parse(readFileSync(`${agentscoutDir(env)}/config.json`, "utf8"));
-  } catch {
-    return null; // absent / bad-JSON / EACCES -> treat as empty
+    raw = readFileSync(file, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    // EACCES/EISDIR/… mean a config EXISTS but cannot be used — never run on defaults instead.
+    throw new AgentScoutError(
+      `config file ${file} exists but could not be read: ${e instanceof Error ? e.message : String(e)}`,
+      "invalid_config",
+      0,
+    );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new AgentScoutError(
+      `config file ${file} is not valid JSON — fix or remove it`,
+      "invalid_config",
+      0,
+    );
+  }
+  // A JSON array/scalar would index to undefined on every field, i.e. read as an empty config.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new AgentScoutError(
+      `config file ${file} must contain a JSON object`,
+      "invalid_config",
+      0,
+    );
+  }
+  return parsed as Partial<ResolvedConfig>;
 }
 
 export function resolveConfig(
@@ -70,13 +138,19 @@ export function resolveConfig(
     maxSpendUsd?: number;
     maxTollUsd?: number;
   };
+  // File-sourced values are validated OUTSIDE the ?? chains below. Inside one, a winning flag or
+  // env var short-circuits the check, so a malformed PERSISTED value would go uninspected — and
+  // then become the active endpoint/cap on the first run that drops the override.
+  const fileEndpoint = strOrThrowVal(file.endpoint, "endpoint (config.json)");
+  const fileNetwork = strOrThrowVal(file.network, "network (config.json)");
+  const fileMaxSpendUsd = numOrThrowVal(file.maxSpendUsd, "maxSpendUsd (config.json)");
   return {
-    endpoint: f.endpoint ?? envStr(env.AGENTSCOUT_ENDPOINT) ?? file.endpoint ?? DEFAULT_ENDPOINT,
-    network: f.network ?? envStr(env.AGENTSCOUT_NETWORK) ?? file.network ?? "eip155:8453",
+    endpoint: f.endpoint ?? envStr(env.AGENTSCOUT_ENDPOINT) ?? fileEndpoint ?? DEFAULT_ENDPOINT,
+    network: f.network ?? envStr(env.AGENTSCOUT_NETWORK) ?? fileNetwork ?? "eip155:8453",
     maxSpendUsd:
       f.maxSpendUsd ??
       numOrThrow(env.AGENTSCOUT_MAX_SPEND_USD, "AGENTSCOUT_MAX_SPEND_USD") ??
-      numOrThrow(file.maxSpendUsd, "maxSpendUsd (config.json)"),
+      fileMaxSpendUsd,
     maxSessionSpendUsd: numOrThrow(
       env.AGENTSCOUT_MAX_SESSION_SPEND_USD,
       "AGENTSCOUT_MAX_SESSION_SPEND_USD",

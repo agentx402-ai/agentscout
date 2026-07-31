@@ -6,6 +6,7 @@ import { runCrawl } from "./commands/crawl";
 import { runExtract } from "./commands/extract";
 import { runQuote } from "./commands/quote";
 import { runRead } from "./commands/read";
+import { runWallet } from "./commands/wallet";
 import { clientFromConfig, readConfigFile, resolveConfig } from "./config";
 import { EXIT, printError, type Writer } from "./output";
 import { VERSION } from "./version";
@@ -19,6 +20,7 @@ Usage:
   agentscout crawl <url> --max-pages N [--max-toll-usd N] [--same-origin|--no-same-origin]
   agentscout crawl status <jobId>
   agentscout crawl artifact <jobId> <key> [--out FILE]
+  agentscout wallet show
   agentscout mcp
   agentscout --version
 
@@ -41,23 +43,36 @@ export async function runCli(
     stdout(`${VERSION}\n`);
     return EXIT.OK;
   }
-  if (cmd === "mcp") {
-    const { startMcp } = await import("./mcp.js");
-    return startMcp({ env, stderr });
-  }
-
   const KNOWN = new Set(["read", "extract", "quote", "crawl"]);
-  if (!KNOWN.has(cmd)) {
+  if (cmd !== "mcp" && cmd !== "wallet" && !KNOWN.has(cmd)) {
     printError(
       stderr,
       "usage",
       `unknown command: ${cmd}`,
-      "commands: read extract quote crawl mcp (run `agentscout --help`)",
+      "commands: read extract quote crawl wallet mcp (run `agentscout --help`)",
     );
     return EXIT.USAGE;
   }
 
+  // EVERY command dispatches inside this one try/catch, so a config/keystore failure always reaches
+  // the operator as the same typed `{error, code}` line on stderr. `mcp` and `wallet` used to be
+  // dispatched above it: their throws (resolveConfig and readConfigFile on a corrupt config.json,
+  // peekStoredAccount on a corrupt account.json, clientFromConfig on a bad key) escaped runCli
+  // instead — as an unhandled rejection with a raw stack trace on the mcp path, since nothing
+  // .catch()es the promise. Fail-closed either way (no server starts, nothing spends), but the
+  // operator got a stack trace instead of the reason.
   try {
+    if (cmd === "mcp") {
+      const { startMcp } = await import("./mcp.js");
+      // `await`, not a bare return: returning the promise would hand the rejection back to the
+      // caller UNCAUGHT, which is precisely the bug this try/catch exists to close.
+      return await startMcp({ env, stderr });
+    }
+    if (cmd === "wallet") {
+      // Dispatched BEFORE the shared client construction below: clientFromConfig MINTS a wallet
+      // when none exists, and `wallet show` must report "no wallet yet" without creating one.
+      return runWallet(rest, { stdout, stderr, env });
+    }
     const cfg = resolveConfig(parseFlags(rest).flags, env, () => readConfigFile(env));
     const client =
       deps.client ??

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -101,6 +101,71 @@ describe("keystore — wallet", () => {
       clean(env);
     }
   });
+});
+
+// A wallet file that EXISTS but is unusable must never read as "no wallet": it may hold a FUNDED
+// key. Treating it as absent hid the problem AND sent the mint path into the create-exclusive
+// write, which then failed with a bare EEXIST that named neither the file nor the cause. Same
+// ABSENT-vs-CORRUPT split the account file below already makes.
+describe("keystore — wallet file: absent vs corrupt", () => {
+  const cfgBase = { endpoint: "https://x.example", network: "eip155:8453" } as const;
+
+  it("corrupt wallet.json throws from peek, mint, and client construction alike", () => {
+    const env = tmpEnv();
+    try {
+      // Exactly what a non-atomic write + a crash leaves behind.
+      writeFileSync(walletPath(env), '{"address":"0x0","privateKey":"0x1234');
+      expect(() => peekStoredWallet(env)).toThrow(/wallet file .* is not valid JSON/);
+      expect(() => getOrCreateStoredWallet(env)).toThrow(/wallet file .* is not valid JSON/);
+      expect(() => clientFromConfig({ ...cfgBase }, { env })).toThrow(/wallet file/);
+    } finally {
+      clean(env);
+    }
+  });
+
+  it("a wallet.json with no usable privateKey throws instead of minting a second wallet", () => {
+    const env = tmpEnv();
+    try {
+      writeFileSync(walletPath(env), JSON.stringify({ address: "0x0", privateKey: "nope" }));
+      expect(() => peekStoredWallet(env)).toThrow(/privateKey/);
+      expect(() => getOrCreateStoredWallet(env)).toThrow(/privateKey/);
+    } finally {
+      clean(env);
+    }
+  });
+
+  it("the corrupt-wallet error names the path but never the key material", () => {
+    const env = tmpEnv();
+    try {
+      const key = generatePrivateKey(); // a real (funded-looking) key inside a truncated file
+      writeFileSync(walletPath(env), `{"privateKey":"${key}"`);
+      expect(() => peekStoredWallet(env)).toThrow(/not valid JSON/);
+      let msg = "";
+      try {
+        peekStoredWallet(env);
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      expect(msg).toContain(walletPath(env));
+      expect(msg).not.toContain(key);
+    } finally {
+      clean(env);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "a wallet.json that exists but can't be read throws (not mistaken for absent)",
+    () => {
+      const env = tmpEnv();
+      try {
+        mkdirSync(walletPath(env)); // stand-in for EACCES: present, unreadable as a file
+        expect(() => peekStoredWallet(env)).toThrow(/EISDIR/);
+        expect(() => getOrCreateStoredWallet(env)).toThrow(/EISDIR/);
+      } finally {
+        clean(env);
+      }
+    },
+  );
 });
 
 describe("keystore — account file", () => {

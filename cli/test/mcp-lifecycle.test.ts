@@ -10,7 +10,7 @@
  * Requires the CLI to be built first (`npm run build`); CI runs build before test (see ci.yml).
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -58,7 +58,7 @@ afterAll(async () => {
 });
 
 describe("MCP server lifecycle", () => {
-  it("stays alive, lists the 5 scout tools, reports VERSION, and serves a live scout_quote", async () => {
+  it("stays alive, lists the 6 scout tools, reports VERSION, and serves a live scout_quote", async () => {
     const home = mkdtempSync(join(tmpdir(), "agentscout-mcp-"));
     const transport = new StdioClientTransport({
       command: process.execPath, // node
@@ -75,7 +75,7 @@ describe("MCP server lifecycle", () => {
     try {
       await client.connect(transport);
 
-      // 1. List tools — exactly the five scout tools, with truthful names.
+      // 1. List tools — exactly the six scout tools, with truthful names.
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual([
         "scout_crawl",
@@ -83,7 +83,17 @@ describe("MCP server lifecycle", () => {
         "scout_extract",
         "scout_quote",
         "scout_read",
+        "scout_wallet_address",
       ]);
+
+      // 1b. The annotations a HOST actually sees over the wire (not just the in-process registry):
+      // a paid fetch must never advertise itself as read-only, nor as possibly destructive.
+      // destructiveHint defaults to TRUE when omitted, so it has to be present and false.
+      for (const name of ["scout_read", "scout_extract", "scout_crawl"]) {
+        const paid = tools.find((t) => t.name === name);
+        expect(paid?.annotations?.readOnlyHint).toBe(false);
+        expect(paid?.annotations?.destructiveHint).toBe(false);
+      }
 
       // 2. The initialize handshake advertises the CLI VERSION.
       expect(client.getServerVersion()?.version).toBe(VERSION);
@@ -128,8 +138,87 @@ describe("MCP server lifecycle", () => {
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(5); // handshake + listing succeeded ...
+      expect(tools).toHaveLength(6); // handshake + listing succeeded ...
       expect(errors).toHaveLength(0); // ... with NO framing corruption from a stray stdout notice
+    } finally {
+      await client.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  // The auto-minted wallet must hold real USDC, so an agent has to be able to find the address to
+  // fund and the file to back up — without ever seeing the key. Same spawn checks the startup
+  // stderr notice, which fires on this exact config (no session cap set).
+  it("scout_wallet_address discovers the auto-minted wallet, and startup warns about the missing session cap", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agentscout-walletaddr-"));
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI_PATH, "mcp"],
+      env: {
+        ...process.env,
+        AGENTSCOUT_HOME: home, // isolate keystore -> forces a fresh auto-provision
+        AGENTSCOUT_ENDPOINT: endpoint,
+        AGENTSCOUT_PRIVATE_KEY: "",
+        AGENTSCOUT_ACCOUNT_KEY: "",
+        AGENTSCOUT_MAX_SESSION_SPEND_USD: "", // unset -> the startup warning must fire
+      },
+      stderr: "pipe",
+    });
+    let stderr = "";
+    transport.stderr?.on("data", (c: Buffer) => {
+      stderr += c.toString();
+    });
+    const client = new Client({ name: "test-client", version: "0.0.1" });
+    try {
+      await client.connect(transport);
+      const res = await client.callTool({ name: "scout_wallet_address", arguments: {} });
+      const content = res.content as Array<{ type: string; text: string }>;
+      const reported = JSON.parse(content[0].text);
+
+      // The address it reports is the one actually minted into the keystore ...
+      const walletFile = join(home, "wallet.json");
+      const minted = JSON.parse(readFileSync(walletFile, "utf8")) as {
+        address: string;
+        privateKey: string;
+      };
+      expect(reported.address).toBe(minted.address);
+      expect(reported.path).toBe(walletFile);
+      expect(reported.source).toBe("keystore");
+      // ... and the key that address holds NEVER crosses the wire.
+      expect(content[0].text).not.toContain(minted.privateKey);
+      expect(content[0].text).not.toMatch(/privateKey/i);
+
+      expect(stderr).toContain("no session spend cap configured");
+      expect(stderr).not.toContain(minted.privateKey);
+    } finally {
+      await client.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("no startup warning when a session spend cap IS configured", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agentscout-cap-"));
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI_PATH, "mcp"],
+      env: {
+        ...process.env,
+        AGENTSCOUT_HOME: home,
+        AGENTSCOUT_ENDPOINT: endpoint,
+        AGENTSCOUT_PRIVATE_KEY: DUMMY_KEY,
+        AGENTSCOUT_MAX_SESSION_SPEND_USD: "1.00",
+      },
+      stderr: "pipe",
+    });
+    let stderr = "";
+    transport.stderr?.on("data", (c: Buffer) => {
+      stderr += c.toString();
+    });
+    const client = new Client({ name: "test-client", version: "0.0.1" });
+    try {
+      await client.connect(transport);
+      await client.listTools(); // round-trip so startup output has certainly been flushed
+      expect(stderr).not.toContain("no session spend cap configured");
     } finally {
       await client.close();
       rmSync(home, { recursive: true, force: true });

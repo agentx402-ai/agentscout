@@ -1,4 +1,4 @@
-import { AgentXError, SpendCapError } from "@agentx402-ai/core";
+import { AgentXError, parseErrorBody, SpendCapError } from "@agentx402-ai/core";
 
 // RE-EXPORT core's base + spend-cap error — never re-declare them, or cross-package
 // `instanceof` breaks (two distinct class objects in node_modules).
@@ -103,16 +103,8 @@ export function scoutErrorFromResponse(
   bodyText: string,
   fallback: string,
 ): AgentScoutError {
-  let detail = fallback;
-  let code = "request_failed";
-  let hint: string | undefined;
-  try {
-    const body = JSON.parse(bodyText) as { error?: string; code?: string; hint?: string };
-    if (body?.error) detail = body.error;
-    if (body?.code) code = body.code;
-    if (body?.hint) hint = body.hint;
-  } catch {
-    /* non-JSON body — keep fallback + request_failed */
-  }
+  // Parsing (including the type-checks on an untrusted body) is shared via core; only the
+  // error CLASS is this SDK's, because that identity is what callers `instanceof`.
+  const { detail, code, hint } = parseErrorBody(bodyText, fallback);
   return new AgentScoutError(`AgentScout ${status}: ${detail}`, code, status, hint);
 }

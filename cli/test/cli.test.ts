@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentScoutError, AgentXError, SpendCapError } from "@agentscout/client";
@@ -29,6 +29,139 @@ describe("runCli dispatch", () => {
     const code = await runCli([], { stdout: (s) => out.push(s), stderr: sink });
     expect(code).toBe(EXIT.OK);
     expect(out.join("")).toContain("agentscout");
+  });
+
+  it("help and the unknown-command hint both list `wallet`", async () => {
+    const out: string[] = [];
+    await runCli(["--help"], { stdout: (s) => out.push(s), stderr: sink });
+    expect(out.join("")).toContain("wallet show");
+    const err: string[] = [];
+    await runCli(["frobnicate"], { stdout: sink, stderr: (s) => err.push(s) });
+    expect(JSON.parse(err.join("")).hint).toContain("wallet");
+  });
+});
+
+describe("runCli dispatches every command inside one error handler", () => {
+  // Regression: `mcp` and `wallet` were dispatched ABOVE the try/catch, so a throw from
+  // resolveConfig/readConfigFile/peekStoredAccount escaped runCli — on the mcp path as an
+  // unhandled rejection with a raw stack trace, because nothing .catch()es that promise.
+  // Fail-closed either way (no server starts), but the operator saw a stack, not the reason.
+  const CORRUPT = '{ "endpoint": ';
+
+  it("a corrupt config.json on the `mcp` path is a typed error, not an unhandled rejection", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agentscout-mcp-cfg-"));
+    const out: string[] = [];
+    const err: string[] = [];
+    try {
+      writeFileSync(join(home, "config.json"), CORRUPT);
+      // Pre-fix this REJECTED rather than resolving, so awaiting it threw out of the test.
+      const code = await runCli(["mcp"], {
+        env: { AGENTSCOUT_HOME: home },
+        stdout: (s) => out.push(s),
+        stderr: (s) => err.push(s),
+      });
+      expect(code).toBe(EXIT.GENERIC);
+      expect(JSON.parse(err.join("")).code).toBe("invalid_config");
+      expect(err.join("")).toContain("config.json");
+      // stdout is the MCP JSON-RPC channel: diagnostics must never land there.
+      expect(out.join("")).toBe("");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("the same corrupt config.json is a typed error on a verb path too", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agentscout-verb-cfg-"));
+    const err: string[] = [];
+    try {
+      writeFileSync(join(home, "config.json"), CORRUPT);
+      const code = await runCli(["quote", "https://ex.com"], {
+        env: { AGENTSCOUT_HOME: home },
+        stdout: sink,
+        stderr: (s) => err.push(s),
+      });
+      expect(code).toBe(EXIT.GENERIC);
+      expect(JSON.parse(err.join("")).code).toBe("invalid_config");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runCli wallet dispatch", () => {
+  it("`wallet show` reports the wallet WITHOUT minting one", async () => {
+    // Dispatched before clientFromConfig, which mints a wallet on first use — so the command that
+    // answers "do I have a wallet yet?" must not be the thing that creates it.
+    const home = mkdtempSync(join(tmpdir(), "agentscout-wallet-cli-"));
+    const out: string[] = [];
+    try {
+      const code = await runCli(["wallet", "show"], {
+        env: { AGENTSCOUT_HOME: home },
+        stdout: (s) => out.push(s),
+        stderr: sink,
+      });
+      expect(code).toBe(EXIT.OK);
+      expect(JSON.parse(out.join("")).address).toBeNull();
+      expect(existsSync(join(home, "wallet.json"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("a malformed spend cap does not block `wallet show` (no config resolution on this path)", async () => {
+    // Discovering the wallet must stay possible while the config is broken — otherwise a bad cap
+    // hides the address you need to fund.
+    const home = mkdtempSync(join(tmpdir(), "agentscout-wallet-cfg-"));
+    const out: string[] = [];
+    try {
+      const code = await runCli(["wallet", "show"], {
+        env: { AGENTSCOUT_HOME: home, AGENTSCOUT_MAX_SPEND_USD: "not-a-number" },
+        stdout: (s) => out.push(s),
+        stderr: sink,
+      });
+      expect(code).toBe(EXIT.OK);
+      expect(JSON.parse(out.join("")).source).toBe("none");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("maps a wallet error through mapError (malformed AGENTSCOUT_PRIVATE_KEY -> invalid_config)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "agentscout-wallet-bad-"));
+    const err: string[] = [];
+    try {
+      const code = await runCli(["wallet", "show"], {
+        env: { AGENTSCOUT_HOME: home, AGENTSCOUT_PRIVATE_KEY: "0xnope" },
+        stdout: sink,
+        stderr: (s) => err.push(s),
+      });
+      expect(code).toBe(EXIT.GENERIC);
+      expect(JSON.parse(err.join("")).code).toBe("invalid_config");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("a corrupt keystore file surfaces as an error, never as a wallet address", async () => {
+    // A corrupt account.json must not be reported as "wallet mode with address X" — that is a
+    // silent namespace switch. The keystore's throw travels all the way out to a non-zero exit.
+    const home = mkdtempSync(join(tmpdir(), "agentscout-wallet-corrupt-"));
+    const out: string[] = [];
+    const err: string[] = [];
+    try {
+      mkdirSync(home, { recursive: true });
+      writeFileSync(join(home, "account.json"), "{ not json");
+      const code = await runCli(["wallet", "show"], {
+        env: { AGENTSCOUT_HOME: home },
+        stdout: (s) => out.push(s),
+        stderr: (s) => err.push(s),
+      });
+      expect(code).toBe(EXIT.GENERIC);
+      expect(err.join("")).toContain("account.json");
+      expect(out.join("")).toBe("");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

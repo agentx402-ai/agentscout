@@ -50,4 +50,16 @@ describe("AgentScout construction", () => {
     expect(new AgentScout({ signer, endpoint, retries: 0 }).maxRetries).toBe(0);
     expect(new AgentScout({ signer, endpoint, retries: 5 }).maxRetries).toBe(5);
   });
+
+  it("rejects an endpoint that is not an absolute http(s) URL", () => {
+    // The endpoint decides WHO issues the 402 a wallet then signs against, so a malformed or
+    // non-http(s) value must fail at construction (invalid_config) — not as a bare TypeError on
+    // `.replace`, and not as a cryptic "Invalid URL" from the first PAYING op.
+    expect(() => new AgentScout({ signer, endpoint: "" })).toThrow(/endpoint/);
+    expect(() => new AgentScout({ signer, endpoint: "scout.example" })).toThrow(/endpoint/);
+    expect(() => new AgentScout({ signer, endpoint: "ftp://scout.example" })).toThrow(/endpoint/);
+    // A config.json value survives JSON.parse as any type, so a non-string must be caught too.
+    // @ts-expect-error numeric endpoint
+    expect(() => new AgentScout({ signer, endpoint: 8080 })).toThrow(/endpoint/);
+  });
 });
