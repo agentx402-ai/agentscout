@@ -2,10 +2,10 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type AgentScout, AgentScoutError, AgentXError, SpendCapError } from "@agentscout/client";
 import { parseFlags, UsageError } from "./args";
-import { runCrawl } from "./commands/crawl";
-import { runExtract } from "./commands/extract";
-import { runQuote } from "./commands/quote";
-import { runRead } from "./commands/read";
+import { parseCrawlArgs, runCrawl } from "./commands/crawl";
+import { parseExtractArgs, runExtract } from "./commands/extract";
+import { parseQuoteArgs, runQuote } from "./commands/quote";
+import { parseReadArgs, runRead } from "./commands/read";
 import { runWallet } from "./commands/wallet";
 import { clientFromConfig, readConfigFile, resolveConfig } from "./config";
 import { EXIT, printError, type Writer } from "./output";
@@ -74,6 +74,26 @@ export async function runCli(
       return runWallet(rest, { stdout, stderr, env });
     }
     const cfg = resolveConfig(parseFlags(rest).flags, env, () => readConfigFile(env));
+    // Validate the command's OWN required arguments (positionals, and any purely-local check
+    // like extract's --schema JSON parse) BEFORE the client construction below —
+    // clientFromConfig mints and persists a wallet on first use (config.ts), so a usage error
+    // must never get that far. Each parseXxxArgs is the exact check runXxx itself runs (and
+    // calls again) — see parseReadArgs's doc comment — so there is one source of truth for
+    // what counts as valid. A parseFlags-level throw (unknown flag, missing/malformed value)
+    // already propagated from the parseFlags(rest) call directly above, before this ever runs.
+    if (cmd === "read") {
+      const parsed = parseReadArgs(rest);
+      if (!parsed.ok) return usageFail(stderr, parsed.message);
+    } else if (cmd === "extract") {
+      const parsed = parseExtractArgs(rest);
+      if (!parsed.ok) return usageFail(stderr, parsed.message);
+    } else if (cmd === "quote") {
+      const parsed = parseQuoteArgs(rest);
+      if (!parsed.ok) return usageFail(stderr, parsed.message);
+    } else {
+      const parsed = parseCrawlArgs(rest);
+      if (!parsed.ok) return usageFail(stderr, parsed.message);
+    }
     const client =
       deps.client ??
       clientFromConfig(cfg, {
@@ -90,6 +110,12 @@ export async function runCli(
   } catch (e) {
     return mapError(e, stderr);
   }
+}
+
+/** Print a usage error in the same shape mapError gives UsageError, and return EXIT.USAGE. */
+function usageFail(stderr: Writer, message: string): number {
+  printError(stderr, "usage", message);
+  return EXIT.USAGE;
 }
 
 function mapError(e: unknown, stderr: Writer): number {
