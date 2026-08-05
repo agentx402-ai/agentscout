@@ -1,7 +1,7 @@
 {
   "name": "@agentscout/client",
-  "version": "0.5.0",
-  "description": "AgentScout SDK — x402-paid web read/extract/crawl for agents.",
+  "version": "0.5.1",
+  "description": "AgentScout SDK \u2014 x402-paid web read/extract/crawl for agents.",
   "license": "MIT",
   "repository": {
     "type": "git",

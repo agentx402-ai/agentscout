@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [0.5.1] — 2026-08-05
+
+### Fixed
+
+- **A usage error no longer mints a wallet.** A valid command with a missing or invalid required
+  argument created and persisted `~/.agentscout/wallet.json` *before* reporting the error, so
+  `agentscout read` with no URL answered a typo with `created a new wallet 0x… Fund it, then retry`
+  — pointing you at spending money to fix a missing argument, and leaving a private key on disk as
+  a side effect of a mistake. Affected `read`, `extract` (missing/invalid `--schema`), `quote`,
+  `crawl` (missing `--url`/`--max-pages`), `crawl status`, and `crawl artifact`. Each command now
+  validates its own arguments before anything can touch the keystore.
+
+  No wallet is lost by upgrading: the mint was reused on later runs, so this only stops the
+  *unwanted* one. The deliberate first-run mint on a genuinely valid command is unchanged.
+
+### Service-side changes since 0.5.0
+
+> These shipped to the hosted service independently of this client release and apply no matter
+> which client version you run. Recorded here because this changelog is where they are visible.
+
+- **Plain-text pages are now read correctly, and are billable.** `text/plain`, `text/markdown`,
+  `text/csv` and similar bodies were being run through an HTML extractor that yielded zero
+  characters, so every `.txt` / `.md` / RFC / source-file page failed the read-success predicate. A
+  body the server explicitly declares as non-HTML text is now used as-is.
+
+  **This changes crawl billing.** A crawl only bills pages that meet the read predicate — a failed
+  page is non-billable and refunded — so a plain-text page that previously failed and was refunded
+  now succeeds and bills at the per-page rate. Crawling a site containing `.txt` files will cost
+  more than it did before, and will return the content you are paying for. A server mislabelling
+  real HTML as `text/plain` is still detected and extracted as HTML.
+
 ## [0.5.0] — 2026-07-31
 
 ### Changed
