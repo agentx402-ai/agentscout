@@ -2,7 +2,7 @@
   "mcpServers": {
     "agentscout": {
       "command": "npx",
-      "args": ["-y", "@agentscout/cli@0.5.0", "mcp"],
+      "args": ["-y", "@agentscout/cli@0.5.1", "mcp"],
       "env": {
         "AGENTSCOUT_ENDPOINT": "${user_config.endpoint:-}",
         "AGENTSCOUT_PRIVATE_KEY": "${user_config.private_key:-}",
