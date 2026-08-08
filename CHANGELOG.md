@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to [SemVer](https://semver.org/).
 
+## [0.5.2] — 2026-08-08
+
+### Changed
+
+- **`@agentx402-ai/core` dependency floor raised to `^0.4.0`.** Core 0.4.0 added `breakdown` and
+  `expiring_soon` to `UsageBlock`, mirroring fields the AgentScout worker already emits on the
+  wire. A caret on a 0.x version pins the minor, so `^0.3.0` never admitted 0.4.0 — the JSON
+  arrived regardless, but nothing in this package could reference `usage.breakdown` without
+  widening the type by hand. No runtime behavior changes here, and no API of `@agentscout/client`
+  or `@agentscout/cli` changes; this only lets the existing wire fields be typed.
+
 ## [0.5.1] — 2026-08-05
 
 ### Fixed
